@@ -1,5 +1,5 @@
 {
   "version": 2,
   "builds": [{ "src": "api/sync.py", "use": "@vercel/python" }],
-  "routes": [{ "src": "/api/sync", "dest": "api/sync.py" }]
+  "routes": [{ "src": "/api/sync(/.*)?", "dest": "api/sync.py" }]
 }
