@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
+from dateutil.parser import parse as parse_date
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 
 from app import config, ghl_client, join, sheets_client
@@ -97,3 +98,48 @@ async def run_sync(
 @app.get("/api/sync/health")
 async def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/api/sync/status")
+async def sync_status():
+    """
+    Reads the last Sync_Log row and returns healthy/unhealthy based on
+    actual sync outcome, not endpoint responsiveness. This is what
+    cron-job.org's second monitor job should poll — not /api/sync itself,
+    which now always responds instantly regardless of sync outcome.
+    """
+    last_entry = sheets_client.SheetsClient().get_last_log_entry()
+
+    if not last_entry:
+        raise HTTPException(status_code=500, detail="No sync history found in Sync_Log")
+
+    last_timestamp = parse_date(last_entry["timestamp"])
+    age_minutes = (datetime.utcnow() - last_timestamp.replace(tzinfo=None)).total_seconds() / 60
+
+    if last_entry["status"] == "failed":
+        raise HTTPException(
+            status_code=500,
+            detail=f"Last sync failed at {last_entry['timestamp']}: "
+                   f"{last_entry.get('error_message', 'no error message recorded')}"
+        )
+
+    if last_entry["status"] == "running" and age_minutes > 10:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Sync has been stuck in 'running' state for {age_minutes:.0f} minutes — likely crashed"
+        )
+
+    if age_minutes > 20:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Last successful sync was {age_minutes:.0f} minutes ago — "
+                   f"cron may have stopped firing (expected every 15 min)"
+        )
+
+    return {
+        "status": "healthy",
+        "last_sync_status": last_entry["status"],
+        "last_sync_timestamp": last_entry["timestamp"],
+        "age_minutes": round(age_minutes, 1),
+        "records_processed": last_entry.get("records_processed")
+    }
