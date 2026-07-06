@@ -97,3 +97,13 @@ class SheetsClient:
             [datetime.now(timezone.utc).isoformat(), records, status, error],
             value_input_option="RAW",
         )
+
+    def get_last_log_entry(self):
+        """Most recent Sync_Log row as a dict, or None if the tab has no data rows yet."""
+        ws = self._get_or_create_ws(LOG_TAB, len(LOG_HEADERS))
+        values = ws.get_all_values()
+        if len(values) <= 1:
+            return None
+        last = values[-1]
+        last = last + [""] * (len(LOG_HEADERS) - len(last))
+        return dict(zip(LOG_HEADERS, last))

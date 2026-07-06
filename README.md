@@ -16,8 +16,27 @@ GHL Private API → FastAPI (Vercel serverless) → Google Sheets → React Dash
 
 ## Endpoints
 
-- `POST /api/sync` — runs full sync (requires `x-cron-secret` header)
+- `POST /api/sync` — requires `x-cron-secret` header. Responds immediately
+  (`{"status": "accepted"}`) and runs the sync in the background. This is
+  what cron-job.org should call — its 30s client timeout no longer matters,
+  since the response returns in under a second regardless of how long the
+  underlying sync takes.
+- `POST /api/sync?wait=true` — same auth, but runs the sync synchronously
+  and returns the full result JSON (`opportunities_fetched`, `rows_updated`,
+  etc). Use this for manual `curl` testing and debugging — not for the cron
+  schedule, since it can take 20–50s and will re-trigger client timeouts.
 - `GET /api/sync/health` — health check
+
+**`Sync_Log` is the source of truth for whether a sync actually succeeded.**
+A `200 {"status": "accepted"}` from the cron endpoint means the request was
+accepted, not that the sync completed — always check `Sync_Log` (or the
+dashboard's "Last updated" pill) to confirm. Every cycle writes exactly one
+of `running` (claimed at start) → `success` or `failed` (final outcome).
+
+**Overlap lock:** if a sync is still `running` and under 10 minutes old when
+a new request comes in, the new request returns `{"status": "skipped",
+"reason": "previous sync still running"}` without starting another sync. A
+`running` row older than 10 minutes is treated as a crashed run and ignored.
 
 ## Environment Variables (set in Vercel)
 
