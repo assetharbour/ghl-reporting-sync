@@ -50,6 +50,7 @@ CUSTOM_FIELD_IDS = {
     "remortgage_campaign_status":           "QrKsWrYe1NhEKMSPnvKL",
     "remortgage_engagement_status":         "P2KcAVmo7qxEuAXUX8rh",
     "pause_automations":                    "If90lxAQst0DbYqHG15k",
+    "advisor_call_status":                  "USSbwwmZyvqVHHx7EM1c",
 }
 
 PIPELINE = {

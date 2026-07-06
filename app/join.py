@@ -31,6 +31,14 @@ COLUMNS = [
     "client_relationship_status", "remortgage_campaign_status",
     "remortgage_engagement_status", "pause_automations",
     "created_date", "last_synced",
+    # Appended (not inserted) so existing column positions never shift:
+    # "opportunity_owner" above is kept as-is (opportunity.assignedTo) for
+    # audit/backward-compat only — it is NOT the case admin. "admin" here
+    # is the correct, contact-level owner (contact.assignedTo) that
+    # reflects Anita Andrews pre-handover / one of the 3 handover admins
+    # post-handover. advisor_name/advisor_call_status are separate
+    # dropdown custom fields, never a GHL assignedTo user ID.
+    "admin", "advisor_name", "advisor_call_status",
 ]
 
 DATE_FIELDS = {
@@ -94,7 +102,13 @@ def build_row(opp: dict, contact: dict) -> dict:
         "client_name": client_name,
         "pipeline_stage": PIPELINE["stages"].get(opp.get("pipelineStageId"), ""),
         "case_status": opp.get("status") or "",
+        # Deprecated: opportunity-level assignedTo. Kept only for audit —
+        # this is NOT the case admin. Use "admin" below instead.
         "opportunity_owner": USERS.get(opp.get("assignedTo"), ""),
+        # The actual current case admin: Anita Andrews pre-handover, or
+        # whichever of the 3 handover admins the automation reassigned to.
+        # Sourced from the CONTACT record, not the opportunity.
+        "admin": USERS.get(contact.get("assignedTo"), ""),
     }
 
     for col in COLUMNS:
