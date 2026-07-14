@@ -39,6 +39,10 @@ COLUMNS = [
     # post-handover. advisor_name/advisor_call_status are separate
     # dropdown custom fields, never a GHL assignedTo user ID.
     "admin", "advisor_name", "advisor_call_status",
+    # Revenue = broker_fee + expected_procuration_fee + solicitor_commission.
+    # total_revenue is blank (not 0) when none of the three are set, so a
+    # confirmed-zero case is distinguishable from a not-yet-recorded one.
+    "broker_fee", "expected_procuration_fee", "solicitor_commission", "total_revenue",
 ]
 
 DATE_FIELDS = {
@@ -88,6 +92,24 @@ def _to_date_str(value) -> str:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
+def parse_number(value):
+    """Coerce a GHL MONETORY field value to a float. Handles plain numbers
+    as well as currency-formatted strings (£, commas, whitespace) as a
+    defensive fallback. Returns None on empty/unparseable input rather
+    than crashing or silently defaulting to 0."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip().replace("£", "").replace(",", "").strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
 def build_row(opp: dict, contact: dict) -> dict:
     """Join one opportunity with its contact into one flat Leads row."""
     cfs = _collect_custom_fields(opp, contact)
@@ -114,6 +136,7 @@ def build_row(opp: dict, contact: dict) -> dict:
     for col in COLUMNS:
         if col in row or col in (
             "avg_days_to_completion", "has_protection", "created_date", "last_synced",
+            "broker_fee", "expected_procuration_fee", "solicitor_commission", "total_revenue",
         ):
             continue
         value = get_cf(cfs, col)
@@ -131,6 +154,18 @@ def build_row(opp: dict, contact: dict) -> dict:
 
     protection_type = get_cf(cfs, "protection_type")
     row["has_protection"] = bool(protection_type not in (None, "", []))
+
+    broker_fee = parse_number(get_cf(cfs, "broker_fee"))
+    procuration_fee = parse_number(get_cf(cfs, "expected_procuration_fee"))
+    solicitor_commission = parse_number(get_cf(cfs, "solicitor_commission"))
+    row["broker_fee"] = "" if broker_fee is None else broker_fee
+    row["expected_procuration_fee"] = "" if procuration_fee is None else procuration_fee
+    row["solicitor_commission"] = "" if solicitor_commission is None else solicitor_commission
+
+    fee_values = [v for v in (broker_fee, procuration_fee, solicitor_commission) if v is not None]
+    # Blank (not 0) when none of the three are set, so a confirmed-zero
+    # case stays distinguishable from a not-yet-recorded one.
+    row["total_revenue"] = round(sum(fee_values), 2) if fee_values else ""
 
     row["created_date"] = _to_date_str(opp.get("createdAt"))
     row["last_synced"] = datetime.now(timezone.utc).isoformat()

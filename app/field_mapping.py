@@ -51,7 +51,14 @@ CUSTOM_FIELD_IDS = {
     "remortgage_engagement_status":         "P2KcAVmo7qxEuAXUX8rh",
     "pause_automations":                    "If90lxAQst0DbYqHG15k",
     "advisor_call_status":                  "USSbwwmZyvqVHHx7EM1c",
+    "broker_fee":                           "nWtA92kgcxzTD98j0aQJ",
+    "expected_procuration_fee":             "cfJm4Ty7COUrRle1k4vL",
+    "solicitor_commission":                 "W9ktEA2AoQYyOx8YhtRG",
 }
+
+# Negotiator (SINGLE_OPTIONS) confirmed via live lookup to return the clean
+# display label directly (e.g. "Karen Goodman"), not a slug — no name
+# mapping needed.
 
 PIPELINE = {
     "id": "EQyj0fwCvT8vrLEGTw5I",
