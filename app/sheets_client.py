@@ -30,7 +30,7 @@ class SheetsClient:
             return self.sheet.add_worksheet(title=title, rows=1000, cols=cols)
 
     def upsert_leads(self, rows: list) -> dict:
-        """Upsert rows into the Leads tab keyed on contact_id.
+        """Upsert rows into the Leads tab keyed on opportunity_id.
 
         Values are always written positionally in COLUMNS order — the header
         row is COLUMNS, and every data row is built from the same list.
@@ -42,11 +42,22 @@ class SheetsClient:
             ws.update(values=[COLUMNS], range_name="A1")
             existing = [COLUMNS]
 
-        # contact_id is column A; sheet rows are 1-indexed, header is row 1
+        # opportunity_id (column B) is the true unique key — a GHL contact
+        # can have multiple opportunities (verified live: 10 contacts
+        # currently do). Keying on contact_id (column A) instead, as this
+        # used to, collapses every opportunity under one contact into a
+        # single lookup slot: when a sync batch contains 2+ opportunities
+        # for the same contact, they all resolve to the same existing
+        # row_num, so batch_update silently applies them in sequence and
+        # only the last one survives — the others vanish from the sheet
+        # with no error. Confirmed in production: Isabel Cristina De
+        # Oliveira Campos has 2 opportunities (one 'abandoned', one
+        # 'open') sharing one contact_id; the abandoned one was being
+        # silently dropped every sync, leaving only the open one visible.
         index = {
-            r[0]: row_num
+            r[1]: row_num
             for row_num, r in enumerate(existing[1:], start=2)
-            if r and r[0]
+            if r and len(r) > 1 and r[1]
         }
 
         def to_values(row: dict) -> list:
@@ -70,7 +81,7 @@ class SheetsClient:
 
         for row in rows:
             values = to_values(row)
-            row_num = index.get(row["contact_id"])
+            row_num = index.get(row["opportunity_id"])
             if row_num:
                 updates.append({
                     "range": f"A{row_num}:{last_col}{row_num}",
