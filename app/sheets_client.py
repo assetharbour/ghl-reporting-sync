@@ -35,6 +35,13 @@ class SheetsClient:
         Values are always written positionally in COLUMNS order — the header
         row is COLUMNS, and every data row is built from the same list.
         """
+        # Defensive: never let two rows in the same batch share an
+        # opportunity_id (e.g. a pagination overlap upstream) — that would
+        # append both as new rows if neither exists in the sheet yet, since
+        # the index below is built once from `existing` and can't catch a
+        # collision within `rows` itself. Last occurrence wins.
+        rows = list({row["opportunity_id"]: row for row in rows}.values())
+
         ws = self._get_or_create_ws(LEADS_TAB, len(COLUMNS))
         existing = ws.get_all_values()
 

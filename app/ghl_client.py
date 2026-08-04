@@ -67,6 +67,14 @@ class GHLClient:
                 if not start_after_id or len(page) < PAGE_SIZE:
                     break
 
+        # Cursor pagination (startAfterId/startAfter) is a moving-target risk
+        # against a live-updating pipeline: if an opportunity's sort position
+        # shifts between page fetches, it can land in both the earlier and a
+        # later page. Dedupe by id, keeping the last-seen copy (from the
+        # later page, so the fresher read wins).
+        deduped = {opp.get("id"): opp for opp in opportunities}
+        opportunities = list(deduped.values())
+
         logger.info("Fetched %d opportunities", len(opportunities))
         return opportunities
 
