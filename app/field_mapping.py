@@ -77,6 +77,10 @@ PIPELINE = {
         "78243983-c3fc-4bb6-91cf-d87f56a7eb43": "Exchange",
         "3a76fcab-1809-4f21-8b5d-e6c0cd404ce5": "Completion",
         "543f238e-3b43-48a7-9490-6eaee1ecd6d4": "Post Completion",
+        # Added by the client after the pipeline was first mapped — sits
+        # last in GHL's own stage order (position 14, after Post
+        # Completion), not interspersed with the forward-progress stages.
+        "ee392caa-03d9-410b-a935-59b356aa0ddb": "Lost",
     },
 }
 

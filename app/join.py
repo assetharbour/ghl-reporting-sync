@@ -118,11 +118,23 @@ def build_row(opp: dict, contact: dict) -> dict:
         part for part in [contact.get("firstName"), contact.get("lastName")] if part
     ) or contact.get("contactName") or opp.get("name") or ""
 
+    stage_id = opp.get("pipelineStageId")
+    pipeline_stage = PIPELINE["stages"].get(stage_id, "")
+    if stage_id and not pipeline_stage:
+        # A stage was added/renamed in GHL without updating PIPELINE["stages"]
+        # (this has happened before) — log it instead of silently writing a
+        # blank pipeline_stage, which is indistinguishable from "not synced".
+        logger.warning(
+            "Unmapped pipeline stage id %s for opportunity %s — add it to "
+            "PIPELINE['stages'] in field_mapping.py",
+            stage_id, opp.get("id"),
+        )
+
     row = {
         "contact_id": opp.get("contactId") or contact.get("id") or "",
         "opportunity_id": opp.get("id") or "",
         "client_name": client_name,
-        "pipeline_stage": PIPELINE["stages"].get(opp.get("pipelineStageId"), ""),
+        "pipeline_stage": pipeline_stage,
         "case_status": opp.get("status") or "",
         # Deprecated: opportunity-level assignedTo. Kept only for audit —
         # this is NOT the case admin. Use "admin" below instead.
