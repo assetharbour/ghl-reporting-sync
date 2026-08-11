@@ -35,3 +35,18 @@ GHL_HEADERS = {
     "Version": "2021-07-28",
     "Content-Type": "application/json",
 }
+
+# GHL custom value IDs — confirmed live via /locations/{id}/customValues.
+WEEKLY_REPORT_VALUE_ID = "Kr3JvQdXgUr1OGHnV45g"
+MONTHLY_REPORT_VALUE_ID = "DeGLq4rXKreKLLGPVpb3"
+
+# assetharbour-reports.vercel.app — a project domain registered via
+# `vercel domains add` (not a raw `vercel alias set`, which does NOT
+# exempt a hostname from Vercel Authentication/SSO — confirmed live,
+# the raw alias 302'd to vercel.com/sso-api until it was added as a
+# proper project domain). Chosen over the raw ghl-reporting-sync-sage
+# alias so a client-facing PDF link doesn't expose internal repo/tool
+# naming. GHL's email link needs a URL that resolves for an
+# unauthenticated recipient — confirmed with a direct curl (real 200
+# JSON, no redirect).
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://assetharbour-reports.vercel.app")

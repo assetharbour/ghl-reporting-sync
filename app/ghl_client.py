@@ -98,6 +98,28 @@ class GHLClient:
         logger.info("Fetched %d of %d contacts", len(contact_map), len(contact_ids))
         return contact_map
 
+    async def get_custom_value(self, value_id: str) -> dict:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.get(
+                f"{config.GHL_BASE_URL}/locations/{config.GHL_LOCATION_ID}/customValues/{value_id}",
+                headers=self._get_headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()["customValue"]
+
+    async def update_custom_value(self, value_id: str, name: str, value: str) -> dict:
+        """Confirmed live (Part 1): GHL_PRIVATE_TOKEN has
+        locations/customValues.write — tested with a real read/write/
+        read-back cycle against weekly_introducer_report_url."""
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.put(
+                f"{config.GHL_BASE_URL}/locations/{config.GHL_LOCATION_ID}/customValues/{value_id}",
+                headers=self._get_headers(),
+                json={"name": name, "value": value},
+            )
+            resp.raise_for_status()
+            return resp.json()["customValue"]
+
     async def _get_contact(self, client: httpx.AsyncClient, contact_id: str):
         for attempt in range(MAX_RETRIES):
             try:

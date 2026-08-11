@@ -16,6 +16,19 @@ LEADS_TAB = "Leads"
 LOG_TAB = "Sync_Log"
 LOG_HEADERS = ["timestamp", "records_processed", "status", "error_message"]
 
+REPORT_ARCHIVE_TAB = "Report_Archive"
+REPORT_ARCHIVE_HEADERS = [
+    "report_type",
+    "period_start",
+    "period_end",
+    "generated_at",
+    "pdf_url",
+    "total_leads",
+    "total_introducers",
+    "top_introducer",
+    "top_introducer_leads",
+]
+
 
 class SheetsClient:
     def __init__(self):
@@ -125,3 +138,29 @@ class SheetsClient:
         last = values[-1]
         last = last + [""] * (len(LOG_HEADERS) - len(last))
         return dict(zip(LOG_HEADERS, last))
+
+    def get_all_leads(self) -> list:
+        """Every Leads row as a dict keyed by COLUMNS (the same header row
+        upsert_leads writes), for report generation to read."""
+        ws = self._get_or_create_ws(LEADS_TAB, len(COLUMNS))
+        values = ws.get_all_values()
+        if len(values) <= 1:
+            return []
+        header = values[0]
+        rows = []
+        for r in values[1:]:
+            r = r + [""] * (len(header) - len(r))
+            rows.append(dict(zip(header, r)))
+        return rows
+
+    def append_report_archive(self, entry: dict):
+        """Appends one row to Report_Archive — never overwrites, this tab
+        only ever grows so past reports stay visible after the GHL custom
+        value has since been overwritten with a newer one."""
+        ws = self._get_or_create_ws(REPORT_ARCHIVE_TAB, len(REPORT_ARCHIVE_HEADERS))
+        if not ws.acell("A1").value:
+            ws.update(values=[REPORT_ARCHIVE_HEADERS], range_name="A1")
+        ws.append_row(
+            [entry.get(col, "") for col in REPORT_ARCHIVE_HEADERS],
+            value_input_option="RAW",
+        )
