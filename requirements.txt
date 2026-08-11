@@ -5,3 +5,4 @@ gspread==6.1.2
 google-auth==2.29.0
 python-dotenv==1.0.1
 python-dateutil==2.9.0.post0
+weasyprint==62.3

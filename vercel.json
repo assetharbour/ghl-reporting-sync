@@ -1,5 +1,11 @@
 {
   "version": 2,
-  "builds": [{ "src": "api/sync.py", "use": "@vercel/python" }],
-  "routes": [{ "src": "/api/sync(/.*)?", "dest": "api/sync.py" }]
+  "builds": [
+    { "src": "api/sync.py", "use": "@vercel/python" },
+    { "src": "api/reports.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "/api/sync(/.*)?", "dest": "api/sync.py" },
+    { "src": "/api/reports(/.*)?", "dest": "api/reports.py" }
+  ]
 }
