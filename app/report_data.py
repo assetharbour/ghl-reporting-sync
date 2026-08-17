@@ -3,6 +3,7 @@ same Leads tab the dashboard reads. Mirrors ghl-dashboard's Introducers.jsx
 logic exactly (conversion = reached the Completion pipeline stage, not
 case_status == 'won', same rule the dashboard was corrected to use)."""
 
+import re
 from datetime import date, datetime, timedelta
 
 
@@ -43,6 +44,16 @@ def most_recent_completed_month(reference=None):
     last_day_prev_month = first_of_this_month - timedelta(days=1)
     first_day_prev_month = last_day_prev_month.replace(day=1)
     return first_day_prev_month, last_day_prev_month
+
+
+def slugify_introducer(name: str) -> str:
+    """Stable identifier for a lead_source value, used both in the GHL
+    custom value name (so the merge tag stays the same week to week) and
+    the dated PDF URL path. Collapses anything non-alphanumeric to a
+    single underscore and caps length so long org names stay usable as a
+    GHL custom value name / URL segment."""
+    slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+    return slug[:60]
 
 
 def introducer_report_data(rows: list, start: date, end: date) -> dict:
@@ -99,6 +110,7 @@ def introducer_report_data(rows: list, start: date, end: date) -> dict:
         "start": start,
         "end": end,
         "stats": stats,
+        "by_source": by_source,
         "total_leads": total_leads,
         "total_introducers": len(stats),
         "total_revenue": sum(total_revenue_vals) if total_revenue_vals else None,

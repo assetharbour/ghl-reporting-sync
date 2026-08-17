@@ -120,6 +120,38 @@ class GHLClient:
             resp.raise_for_status()
             return resp.json()["customValue"]
 
+    async def list_custom_values(self) -> list:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.get(
+                f"{config.GHL_BASE_URL}/locations/{config.GHL_LOCATION_ID}/customValues",
+                headers=self._get_headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()["customValues"]
+
+    async def create_custom_value(self, name: str, value: str) -> dict:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.post(
+                f"{config.GHL_BASE_URL}/locations/{config.GHL_LOCATION_ID}/customValues",
+                headers=self._get_headers(),
+                json={"name": name, "value": value},
+            )
+            resp.raise_for_status()
+            return resp.json()["customValue"]
+
+    async def upsert_custom_value_by_name(self, name: str, value: str, existing: list = None) -> dict:
+        """Per-introducer custom values are created on demand (one per
+        lead_source, named e.g. weekly_introducer_report_url_veriform) —
+        unlike the two fixed weekly/monthly IDs in config.py, there's no
+        known id ahead of time. `existing` lets a caller looping over many
+        names reuse one list_custom_values() call instead of paying for a
+        fresh list request per introducer."""
+        custom_values = existing if existing is not None else await self.list_custom_values()
+        match = next((cv for cv in custom_values if cv.get("name") == name), None)
+        if match:
+            return await self.update_custom_value(match["id"], name, value)
+        return await self.create_custom_value(name, value)
+
     async def _get_contact(self, client: httpx.AsyncClient, contact_id: str):
         for attempt in range(MAX_RETRIES):
             try:

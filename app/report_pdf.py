@@ -21,6 +21,8 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from app.report_data import parse_number
+
 BRAND_GREEN = colors.HexColor("#6DA544")
 BRAND_NAVY = colors.HexColor("#2E3A48")
 BRAND_PINK = colors.HexColor("#E91E63")
@@ -312,6 +314,127 @@ def generate_introducer_report_pdf(data: dict, report_type: str, period_label: s
             style_cmds.append(("BACKGROUND", (0, i), (-1, i), CARD_BG))
     intro_table.setStyle(TableStyle(style_cmds))
     story.append(intro_table)
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+def build_individual_highlights(stat: dict) -> list:
+    """Same number-backed-only rule as build_highlights, scoped to one
+    introducer's own leads -- no comparison against other introducers."""
+    lines = []
+    count = stat["count"]
+    completions = stat["completions"]
+
+    if completions:
+        lines.append(
+            f"{count} leads sent this period, {completions} reached completion: "
+            f"{_fmt_pct(completions, count)} conversion."
+        )
+    else:
+        lines.append(f"{count} leads sent this period, none have reached completion yet.")
+
+    if stat["open"]:
+        lines.append(f"{stat['open']} of these leads are still open.")
+
+    if stat["revenue_sum"] is not None:
+        lines.append(
+            f"Recorded revenue from these referrals: {_fmt_currency(stat['revenue_sum'])} "
+            f"across {stat['revenue_recorded']} of {count} cases."
+        )
+
+    return lines
+
+
+def generate_individual_introducer_report_pdf(
+    stat: dict, leads: list, introducer_name: str, period_label: str
+) -> bytes:
+    """Same branding and layout system as generate_introducer_report_pdf,
+    scoped to a single introducer's own leads -- no ranking table against
+    other introducers, since this PDF is meant for that introducer only."""
+    buf = io.BytesIO()
+
+    content_w = PAGE_W - 2 * MARGIN
+    frame = Frame(
+        MARGIN,
+        FOOTER_H,
+        content_w,
+        PAGE_H - HEADER_H - FOOTER_H - 6 * mm,
+        id="body",
+        topPadding=8 * mm,
+    )
+
+    def on_page(canvas, doc):
+        _header_footer(canvas, doc, introducer_name, period_label)
+
+    doc = BaseDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=MARGIN,
+        rightMargin=MARGIN,
+        topMargin=HEADER_H,
+        bottomMargin=FOOTER_H,
+    )
+    doc.addPageTemplates([PageTemplate(id="main", frames=[frame], onPage=on_page)])
+
+    story = []
+
+    stat_cells = [
+        _stat_block("Leads Sent", str(stat["count"])),
+        _stat_block("Reached Completion", str(stat["completions"])),
+        _stat_block("Conversion", _fmt_pct(stat["completions"], stat["count"])),
+        _stat_block(
+            "Revenue",
+            _fmt_currency(stat["revenue_sum"]) if stat["revenue_sum"] is not None else "—",
+        ),
+    ]
+    stats_table = Table([stat_cells], colWidths=[content_w * 0.25] * 4)
+    stats_table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(stats_table)
+    story.append(Spacer(1, 8 * mm))
+
+    story.append(Paragraph("Highlights", STYLES["section"]))
+    for line in build_individual_highlights(stat):
+        story.append(Paragraph(line, STYLES["body"]))
+        story.append(Spacer(1, 2))
+    story.append(Spacer(1, 6 * mm))
+
+    story.append(Paragraph("Your leads this period", STYLES["section"]))
+    header_row = [
+        Paragraph(h, STYLES["table_header"])
+        for h in ["Client", "Created", "Stage", "Status", "Revenue"]
+    ]
+    table_rows = [header_row]
+    for r in sorted(leads, key=lambda r: r.get("created_date") or ""):
+        revenue = parse_number(r.get("total_revenue"))
+        table_rows.append(
+            [
+                Paragraph(str(r.get("client_name") or "—"), STYLES["table_cell_bold"]),
+                Paragraph(str(r.get("created_date") or "—"), STYLES["table_cell"]),
+                Paragraph(str(r.get("pipeline_stage") or "—"), STYLES["table_cell"]),
+                Paragraph(str(r.get("case_status") or "—"), STYLES["table_cell"]),
+                Paragraph(_fmt_currency(revenue) if revenue is not None else "—", STYLES["table_cell"]),
+            ]
+        )
+
+    col_widths = [content_w * 0.30, content_w * 0.16, content_w * 0.24, content_w * 0.14, content_w * 0.16]
+    leads_table = Table(table_rows, colWidths=col_widths, repeatRows=1)
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), BRAND_NAVY),
+        ("BOX", (0, 0), (-1, -1), 0.75, LINE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, LINE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]
+    for i in range(1, len(table_rows)):
+        style_cmds.append(
+            ("BACKGROUND", (0, i), (-1, i), colors.HexColor("#FAFBFC") if i % 2 == 0 else CARD_BG)
+        )
+    leads_table.setStyle(TableStyle(style_cmds))
+    story.append(leads_table)
 
     doc.build(story)
     return buf.getvalue()

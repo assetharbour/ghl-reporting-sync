@@ -73,6 +73,29 @@ async def get_monthly_pdf(period_start: str):
     return Response(content=pdf_bytes, media_type="application/pdf")
 
 
+@app.get("/api/reports/weekly/individual/{slug}/{period_start}.pdf")
+async def get_weekly_individual_pdf(slug: str, period_start: str):
+    try:
+        start = datetime.strptime(period_start, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="period_start must be YYYY-MM-DD")
+    end = start + timedelta(days=6)
+
+    rows = sheets_client.SheetsClient().get_all_leads()
+    data = report_data.introducer_report_data(rows, start, end)
+    match = next(
+        (s for s in data["stats"] if report_data.slugify_introducer(s["source"]) == slug), None
+    )
+    if not match:
+        raise HTTPException(status_code=404, detail="No leads found for this introducer in this period")
+
+    leads = data["by_source"].get(match["source"], [])
+    pdf_bytes = report_pdf.generate_individual_introducer_report_pdf(
+        match, leads, match["source"], _weekly_period_label(start, end)
+    )
+    return Response(content=pdf_bytes, media_type="application/pdf")
+
+
 async def _generate_and_publish(report_type: str, start: date, end: date, pdf_url: str, value_id: str):
     """Background task: build the PDF once (to get real numbers for the
     archive row), archive it, then point the GHL custom value at the
@@ -143,3 +166,79 @@ async def run_monthly_report(background_tasks: BackgroundTasks, x_cron_secret: s
         _generate_and_publish, "monthly", start, end, pdf_url, config.MONTHLY_REPORT_VALUE_ID
     )
     return {"status": "accepted", "period_start": start.isoformat(), "period_end": end.isoformat()}
+
+
+async def _generate_and_publish_individual_reports():
+    """One PDF + one GHL custom value per introducer active in the most
+    recently completed week. Unlike the weekly/monthly aggregate report,
+    there's no fixed custom value id per introducer ahead of time -- the
+    name is derived from the introducer's own lead_source text (e.g.
+    weekly_introducer_report_url_veriform) and created on first run,
+    updated on every run after. Each introducer is processed independently
+    so one failure doesn't take down the rest of the batch."""
+    start, end = report_data.most_recent_completed_week()
+    try:
+        sheets = sheets_client.SheetsClient()
+        rows = sheets.get_all_leads()
+        data = report_data.introducer_report_data(rows, start, end)
+        period_label = _weekly_period_label(start, end)
+        ghl = ghl_client.GHLClient()
+        existing_values = await ghl.list_custom_values()
+    except Exception:
+        logger.exception("Individual weekly reports: failed to load data, aborting")
+        return
+
+    succeeded = failed = 0
+    for stat in data["stats"]:
+        source = stat["source"]
+        try:
+            slug = report_data.slugify_introducer(source)
+            leads = data["by_source"].get(source, [])
+
+            # Render once now purely to validate it builds without error --
+            # the GET endpoint re-renders on each actual fetch.
+            report_pdf.generate_individual_introducer_report_pdf(stat, leads, source, period_label)
+
+            pdf_url = (
+                f"{config.PUBLIC_BASE_URL}/api/reports/weekly/individual/{slug}/{start.isoformat()}.pdf"
+            )
+            cv_name = f"weekly_introducer_report_url_{slug}"
+
+            sheets.append_report_archive(
+                {
+                    "report_type": "weekly_individual",
+                    "period_start": start.isoformat(),
+                    "period_end": end.isoformat(),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "pdf_url": pdf_url,
+                    "total_leads": stat["count"],
+                    "total_introducers": 1,
+                    "top_introducer": source,
+                    "top_introducer_leads": stat["count"],
+                }
+            )
+
+            result = await ghl.upsert_custom_value_by_name(cv_name, pdf_url, existing=existing_values)
+            if not any(cv.get("name") == cv_name for cv in existing_values):
+                existing_values.append(result)
+
+            succeeded += 1
+        except Exception:
+            logger.exception("Individual weekly report failed for introducer %r", source)
+            failed += 1
+
+    logger.info(
+        "Individual weekly reports for %s to %s: %d succeeded, %d failed",
+        start, end, succeeded, failed,
+    )
+
+
+@app.post("/api/reports/weekly/individual")
+async def run_weekly_individual_reports(
+    background_tasks: BackgroundTasks, x_cron_secret: str = Header(None)
+):
+    if x_cron_secret != config.CRON_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    background_tasks.add_task(_generate_and_publish_individual_reports)
+    return {"status": "accepted"}
