@@ -70,6 +70,10 @@ PIPELINE = {
         "fb49a23f-58c2-475d-82c1-c9f35e7b3672": "Docs Requested",
         "a333899d-f065-44e2-9c05-af4f0c9dca84": "Docs Received / Full Review",
         "2a78423f-3eb2-4852-b76f-6e116314809f": "Advisor Recommendation",
+        # Added by the client after the pipeline was first mapped — sits
+        # between Advisor Recommendation and Solicitor / Application Prep
+        # in GHL's own stage order (confirmed live via the pipelines API).
+        "df753fbf-b312-4d92-99ff-264f14aab08d": "Awaiting Client Response",
         "2e8f2e2b-f0ff-46eb-8e25-71bfbf2cb498": "Solicitor / Application Prep",
         "de8a593d-5b02-4002-a641-80296692940e": "Application Submitted",
         "06953314-657f-4e9d-be45-37c4186242a4": "Lender Processing",
