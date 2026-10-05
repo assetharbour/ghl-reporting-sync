@@ -120,6 +120,53 @@ class SheetsClient:
         logger.info("Sheet upsert: %d updated, %d inserted", updated, inserted)
         return {"updated": updated, "inserted": inserted, "total": updated + inserted}
 
+    def remove_stale_rows(
+        self, live_opportunity_ids: set, max_fraction: float = 0.10, dry_run: bool = False
+    ) -> dict:
+        """Delete Leads rows whose opportunity no longer exists in the tracked
+        GHL pipeline (deleted, or moved to another pipeline). upsert_leads only
+        ever adds/updates, so without this those rows sit at their last stage
+        forever and are counted in every report.
+
+        Refuses to delete when the live set is empty or when more than
+        max_fraction of rows would go, so a bad/partial GHL response can't
+        wipe the sheet."""
+        ws = self._get_or_create_ws(LEADS_TAB, len(COLUMNS))
+        values = ws.get_all_values()
+        data_rows = values[1:]
+        stale = [
+            (row_num, r)
+            for row_num, r in enumerate(data_rows, start=2)
+            if len(r) > 1 and r[1] and r[1] not in live_opportunity_ids
+        ]
+        result = {"removed": 0, "stale": len(stale), "rows": [r for _, r in stale], "skipped": ""}
+
+        if not stale:
+            return result
+        if not live_opportunity_ids:
+            result["skipped"] = "live opportunity set is empty"
+        elif len(stale) > max_fraction * len(data_rows):
+            result["skipped"] = f"{len(stale)} of {len(data_rows)} rows is over the {max_fraction:.0%} safety limit"
+        if result["skipped"]:
+            logger.warning("Stale-row cleanup skipped: %s", result["skipped"])
+            return result
+        if dry_run:
+            return result
+
+        # Highest row first so earlier deletions don't shift later indexes.
+        requests = [
+            {
+                "deleteDimension": {
+                    "range": {"sheetId": ws.id, "dimension": "ROWS", "startIndex": row_num - 1, "endIndex": row_num}
+                }
+            }
+            for row_num, _ in sorted(stale, reverse=True)
+        ]
+        self.sheet.batch_update({"requests": requests})
+        result["removed"] = len(stale)
+        logger.info("Removed %d stale Leads rows", len(stale))
+        return result
+
     def log_sync(self, status: str, records: int, error: str = ""):
         ws = self._get_or_create_ws(LOG_TAB, len(LOG_HEADERS))
         if not ws.acell("A1").value:

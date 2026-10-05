@@ -30,6 +30,9 @@ class GHLClient:
         opportunities = []
         start_after_id = None
         start_after = None
+        # Callers that act on absence (deleting stale Sheet rows) must check
+        # this: a page error below ends the loop with a partial list.
+        self.last_fetch_complete = True
 
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             while True:
@@ -53,6 +56,7 @@ class GHLClient:
                     data = resp.json()
                 except Exception as e:
                     logger.error("Failed to fetch opportunities page: %s", e)
+                    self.last_fetch_complete = False
                     break
 
                 page = data.get("opportunities", [])

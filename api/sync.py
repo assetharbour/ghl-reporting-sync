@@ -46,6 +46,19 @@ async def do_full_sync(sheets: sheets_client.SheetsClient = None) -> dict:
         rows = join.build_all_rows(opportunities, contact_map)
 
         result = sheets.upsert_leads(rows)
+
+        # Drop rows for opportunities deleted in GHL or moved to another
+        # pipeline. Only safe on a complete fetch: a partial page list would
+        # make live rows look stale.
+        rows_removed = 0
+        if ghl.last_fetch_complete:
+            try:
+                rows_removed = sheets.remove_stale_rows({o["id"] for o in opportunities})["removed"]
+            except Exception:
+                logger.exception("Stale-row cleanup failed (sync itself succeeded)")
+        else:
+            logger.warning("Skipping stale-row cleanup: opportunity fetch was incomplete")
+
         sheets.log_sync("success", result["total"])
 
         return {
@@ -54,6 +67,7 @@ async def do_full_sync(sheets: sheets_client.SheetsClient = None) -> dict:
             "contacts_fetched": len(contact_map),
             "rows_inserted": result["inserted"],
             "rows_updated": result["updated"],
+            "rows_removed": rows_removed,
         }
 
     except Exception as e:
