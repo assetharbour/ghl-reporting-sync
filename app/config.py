@@ -59,3 +59,9 @@ EVONEX_WEBHOOK_TOKENS = [
     t.strip() for t in os.environ.get("EVONEX_WEBHOOK_TOKEN", "").split(",") if t.strip()
 ]
 EVONEX_SHEET_ID = os.environ.get("EVONEX_SHEET_ID", "").strip()
+
+# Incremental Leads sync. "" / "off": always a full sync (the default).
+# "shadow": still a full sync, but also logs what an incremental run would have
+# missed. "on" (or 1/true/yes): incremental, with a full refresh once a day.
+INCREMENTAL_SYNC = os.environ.get("INCREMENTAL_SYNC", "").strip().lower()
+FULL_REFRESH_HOUR_UTC = int(os.environ.get("FULL_REFRESH_HOUR_UTC", "3"))

@@ -42,11 +42,18 @@ class SheetsClient:
         except gspread.WorksheetNotFound:
             return self.sheet.add_worksheet(title=title, rows=1000, cols=cols)
 
-    def upsert_leads(self, rows: list) -> dict:
+    def read_leads_values(self) -> list:
+        """The whole Leads tab as raw values (header row first)."""
+        return self._get_or_create_ws(LEADS_TAB, len(COLUMNS)).get_all_values()
+
+    def upsert_leads(self, rows: list, existing: list = None) -> dict:
         """Upsert rows into the Leads tab keyed on opportunity_id.
 
         Values are always written positionally in COLUMNS order — the header
         row is COLUMNS, and every data row is built from the same list.
+
+        `existing` lets a caller that has already read the tab (read_leads_values)
+        reuse that snapshot instead of paying for a second read.
         """
         # Defensive: never let two rows in the same batch share an
         # opportunity_id (e.g. a pagination overlap upstream) — that would
@@ -56,7 +63,8 @@ class SheetsClient:
         rows = list({row["opportunity_id"]: row for row in rows}.values())
 
         ws = self._get_or_create_ws(LEADS_TAB, len(COLUMNS))
-        existing = ws.get_all_values()
+        if existing is None:
+            existing = ws.get_all_values()
 
         if not existing or not any(existing[0]):
             ws.update(values=[COLUMNS], range_name="A1")
@@ -121,7 +129,8 @@ class SheetsClient:
         return {"updated": updated, "inserted": inserted, "total": updated + inserted}
 
     def remove_stale_rows(
-        self, live_opportunity_ids: set, max_fraction: float = 0.10, dry_run: bool = False
+        self, live_opportunity_ids: set, max_fraction: float = 0.10, dry_run: bool = False,
+        values: list = None,
     ) -> dict:
         """Delete Leads rows whose opportunity no longer exists in the tracked
         GHL pipeline (deleted, or moved to another pipeline). upsert_leads only
@@ -132,7 +141,8 @@ class SheetsClient:
         max_fraction of rows would go, so a bad/partial GHL response can't
         wipe the sheet."""
         ws = self._get_or_create_ws(LEADS_TAB, len(COLUMNS))
-        values = ws.get_all_values()
+        if values is None:
+            values = ws.get_all_values()
         data_rows = values[1:]
         stale = [
             (row_num, r)
@@ -185,6 +195,30 @@ class SheetsClient:
         last = values[-1]
         last = last + [""] * (len(LOG_HEADERS) - len(last))
         return dict(zip(LOG_HEADERS, last))
+
+    def get_last_success_time(self):
+        """Timestamp (UTC datetime) of the most recent 'success' Sync_Log row, or
+        None. Reads only the tail of the tab: the log grows ~190 rows a day and a
+        success is written every cycle, so it is always near the bottom. Falls
+        back to a full read if the tail holds none."""
+        ws = self._get_or_create_ws(LOG_TAB, len(LOG_HEADERS))
+        last_row = ws.row_count
+        tail = ws.get(f"A{max(2, last_row - 399)}:C{last_row}") if last_row >= 2 else []
+        found = self._latest_success(tail)
+        if found is None:
+            found = self._latest_success(ws.get_all_values()[1:])
+        return found
+
+    @staticmethod
+    def _latest_success(rows: list):
+        for row in reversed(rows):
+            if len(row) >= 3 and row[2] == "success":
+                try:
+                    ts = datetime.fromisoformat(row[0])
+                except ValueError:
+                    continue
+                return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+        return None
 
     def get_all_leads(self) -> list:
         """Every Leads row as a dict keyed by COLUMNS (the same header row

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 import httpx
 
@@ -14,6 +15,8 @@ CONTACT_BATCH_SIZE = 10
 BATCH_PAUSE_SECONDS = 1.2  # GHL burst limit is 100 req / 10s per location
 REQUEST_TIMEOUT = 30.0
 MAX_RETRIES = 4
+CONTACT_SEARCH_PAGE_SIZE = 100
+CONTACT_SEARCH_MAX_PAGES = 20
 
 
 class GHLClient:
@@ -101,6 +104,62 @@ class GHLClient:
 
         logger.info("Fetched %d of %d contacts", len(contact_map), len(contact_ids))
         return contact_map
+
+    async def search_contacts_updated_since(self, since: datetime):
+        """Contacts (custom fields included) whose dateUpdated is at or after
+        `since`, via POST /contacts/search. Covers the whole location, so the
+        caller filters to the contacts it cares about.
+
+        Returns None whenever the result might be incomplete (request failure,
+        or more pages than CONTACT_SEARCH_MAX_PAGES), so the caller can fall back
+        to a full sync instead of silently missing changes."""
+        fmt = "%Y-%m-%dT%H:%M:%S.000Z"
+        gte = since.astimezone(timezone.utc).strftime(fmt)
+        lte = datetime.now(timezone.utc).strftime(fmt)
+        found = {}
+
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            for page in range(1, CONTACT_SEARCH_MAX_PAGES + 1):
+                body = {
+                    "locationId": config.GHL_LOCATION_ID,
+                    "page": page,
+                    "pageLimit": CONTACT_SEARCH_PAGE_SIZE,
+                    "filters": [
+                        {"field": "dateUpdated", "operator": "range", "value": {"gte": gte, "lte": lte}}
+                    ],
+                }
+                data = await self._post_json(client, "/contacts/search", body)
+                if data is None:
+                    return None
+                batch = data.get("contacts") or []
+                for contact in batch:
+                    if contact.get("id"):
+                        found[contact["id"]] = contact
+                if len(batch) < CONTACT_SEARCH_PAGE_SIZE:
+                    return list(found.values())
+
+        logger.warning("Contact search hit the %d-page cap; treating it as incomplete", CONTACT_SEARCH_MAX_PAGES)
+        return None
+
+    async def _post_json(self, client: httpx.AsyncClient, path: str, body: dict):
+        """POST with retry/backoff (honours 429 Retry-After). None on final failure."""
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = await client.post(
+                    f"{config.GHL_BASE_URL}{path}", headers=self._get_headers(), json=body
+                )
+                if resp.status_code == 429 and attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(float(resp.headers.get("Retry-After") or 2 ** (attempt + 1)))
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(2 ** (attempt + 1))
+                    continue
+                logger.error("POST %s failed: %s", path, type(e).__name__)
+                return None
+        return None
 
     async def get_custom_value(self, value_id: str) -> dict:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:

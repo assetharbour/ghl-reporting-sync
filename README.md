@@ -52,3 +52,28 @@ a new request comes in, the new request returns `{"status": "skipped",
 `test_sync.py` runs the full pipeline directly (no HTTP layer) and prints
 the result; `verify_sheet.py` reads the Leads and Sync_Log tabs back to
 confirm data landed.
+
+## Incremental sync (`INCREMENTAL_SYNC`)
+
+By default every cycle re-reads every contact and rewrites every row. Setting
+`INCREMENTAL_SYNC` changes that (it is read from the Vercel environment; a redeploy
+is needed after changing it):
+
+| Value | Behaviour |
+|---|---|
+| unset / `off` | Always the full sync described above. |
+| `shadow` | Still a full sync, but each run also logs what an incremental run would have missed: `shadow since=... contacts_changed=N planned=P true_changes=T missed=M`. `missed` must stay 0 before switching on. |
+| `on` (`1`/`true`/`yes`) | Incremental: list all opportunities (new, moved, deleted, stage/status changes), ask GHL for contacts changed since the last successful sync (minus a 10-minute overlap) via `POST /contacts/search` on `dateUpdated`, and rebuild/write only rows that actually changed. |
+
+Contact-level fields (admin, advisor, call status...) live on the contact and do **not**
+move the opportunity's `updatedAt`, which is why changed contacts are queried
+separately. Safety nets in `on` mode: one full refresh per day (first run after
+`FULL_REFRESH_HOUR_UTC`, default 3), a full sync if there is no successful sync in the
+last 24 h, if the changed-contact lookup fails or is incomplete, or if the Leads header
+row differs from `COLUMNS`. `POST /api/sync?full=true` forces a full sync.
+
+In `on` mode `Sync_Log.records_processed` is the number of rows **written**, and an
+unchanged row keeps its old `last_synced` (the daily full refresh rewrites them all).
+Each run logs one line: `sync mode=... opportunities=... rows_written=... rows_removed=... ms=...`.
+
+Tests: `python -m pytest` (needs `requirements-dev.txt`).

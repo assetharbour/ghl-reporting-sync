@@ -1,10 +1,11 @@
 import logging
+import time
 from datetime import datetime, timezone
 
 from dateutil.parser import parse as parse_date
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 
-from app import config, ghl_client, join, sheets_client
+from app import config, ghl_client, incremental, join, sheets_client
 
 logger = logging.getLogger(__name__)
 
@@ -28,47 +29,80 @@ def _lock_is_held(sheets: sheets_client.SheetsClient) -> bool:
     return age_minutes < LOCK_STALE_MINUTES
 
 
-async def do_full_sync(sheets: sheets_client.SheetsClient = None) -> dict:
-    """Full sync cycle: fetch opportunities -> fetch contacts -> join -> upsert -> log.
+async def _full_cycle(ghl, sheets, opportunities=None):
+    """The original full sync: every opportunity, every contact, every row.
+    `opportunities` lets a fallback from the incremental path reuse a list it
+    already fetched. Returns (result dict, rows written)."""
+    if opportunities is None:
+        opportunities = await ghl.get_all_opportunities()
+
+    contact_ids = list({o["contactId"] for o in opportunities if o.get("contactId")})
+    contact_map = await ghl.get_all_contacts(contact_ids)
+
+    rows = join.build_all_rows(opportunities, contact_map)
+
+    # Shadow mode: log what an incremental run would have missed. Never raises.
+    snapshot = None
+    if incremental.mode() == "shadow":
+        snapshot = await incremental.shadow_check(ghl, sheets, opportunities, rows)
+
+    result = sheets.upsert_leads(rows, existing=snapshot)
+
+    # Drop rows for opportunities deleted in GHL or moved to another
+    # pipeline. Only safe on a complete fetch: a partial page list would
+    # make live rows look stale.
+    rows_removed = 0
+    if ghl.last_fetch_complete:
+        try:
+            rows_removed = sheets.remove_stale_rows({o["id"] for o in opportunities})["removed"]
+        except Exception:
+            logger.exception("Stale-row cleanup failed (sync itself succeeded)")
+    else:
+        logger.warning("Skipping stale-row cleanup: opportunity fetch was incomplete")
+
+    return {
+        "status": "success",
+        "mode": "full",
+        "opportunities_fetched": len(opportunities),
+        "contacts_fetched": len(contact_map),
+        "rows_inserted": result["inserted"],
+        "rows_updated": result["updated"],
+        "rows_removed": rows_removed,
+    }, result["total"]
+
+
+async def do_full_sync(sheets: sheets_client.SheetsClient = None, force_full: bool = False) -> dict:
+    """One sync cycle: fetch -> join -> upsert -> log. Full by default; with
+    INCREMENTAL_SYNC=on it only processes what changed (see app/incremental.py),
+    falling back to the full cycle whenever that can't be trusted.
 
     Must never raise unhandled — every outcome (success or failure) is
     recorded in Sync_Log, which is the source of truth for whether a
     cycle actually completed.
     """
     sheets = sheets or sheets_client.SheetsClient()
+    started = time.monotonic()
     try:
         ghl = ghl_client.GHLClient()
-        opportunities = await ghl.get_all_opportunities()
 
-        contact_ids = list({o["contactId"] for o in opportunities if o.get("contactId")})
-        contact_map = await ghl.get_all_contacts(contact_ids)
-
-        rows = join.build_all_rows(opportunities, contact_map)
-
-        result = sheets.upsert_leads(rows)
-
-        # Drop rows for opportunities deleted in GHL or moved to another
-        # pipeline. Only safe on a complete fetch: a partial page list would
-        # make live rows look stale.
-        rows_removed = 0
-        if ghl.last_fetch_complete:
+        outcome, already_fetched = None, None
+        if incremental.mode() == "on" and not force_full:
             try:
-                rows_removed = sheets.remove_stale_rows({o["id"] for o in opportunities})["removed"]
-            except Exception:
-                logger.exception("Stale-row cleanup failed (sync itself succeeded)")
-        else:
-            logger.warning("Skipping stale-row cleanup: opportunity fetch was incomplete")
+                outcome = await incremental.run(ghl, sheets)
+            except incremental.FallbackToFull as fallback:
+                incremental.logger.info("incremental -> full sync: %s", fallback.reason)
+                already_fetched = fallback.opportunities
+        if outcome is None:
+            outcome = await _full_cycle(ghl, sheets, already_fetched)
+        result, rows_written = outcome
 
-        sheets.log_sync("success", result["total"])
-
-        return {
-            "status": "success",
-            "opportunities_fetched": len(opportunities),
-            "contacts_fetched": len(contact_map),
-            "rows_inserted": result["inserted"],
-            "rows_updated": result["updated"],
-            "rows_removed": rows_removed,
-        }
+        sheets.log_sync("success", rows_written)
+        incremental.logger.info(
+            "sync mode=%s opportunities=%s rows_written=%s rows_removed=%s ms=%d",
+            result["mode"], result["opportunities_fetched"], rows_written,
+            result["rows_removed"], (time.monotonic() - started) * 1000,
+        )
+        return result
 
     except Exception as e:
         logger.exception("Sync failed")
@@ -83,6 +117,7 @@ async def do_full_sync(sheets: sheets_client.SheetsClient = None) -> dict:
 async def run_sync(
     background_tasks: BackgroundTasks,
     wait: bool = False,
+    full: bool = False,
     x_cron_secret: str = Header(None),
 ):
     if x_cron_secret != config.CRON_SECRET:
@@ -98,11 +133,11 @@ async def run_sync(
     sheets.log_sync("running", 0)
 
     if wait:
-        result = await do_full_sync(sheets)
+        result = await do_full_sync(sheets, full)
         result["duration_seconds"] = round((datetime.now(timezone.utc) - start).total_seconds(), 2)
         return result
 
-    background_tasks.add_task(do_full_sync, sheets)
+    background_tasks.add_task(do_full_sync, sheets, full)
     return {
         "status": "accepted",
         "note": "sync running in background — check Sync_Log for result",
