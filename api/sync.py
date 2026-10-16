@@ -9,6 +9,10 @@ from app import config, ghl_client, incremental, join, sheets_client
 
 logger = logging.getLogger(__name__)
 
+# httpx logs one INFO line per request (~640 per sync), which buries everything else
+# in Vercel's per-request log and costs CPU. Warnings and errors still come through.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 app = FastAPI()
 
 LOCK_STALE_MINUTES = 10

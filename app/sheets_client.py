@@ -16,6 +16,11 @@ LEADS_TAB = "Leads"
 LOG_TAB = "Sync_Log"
 LOG_HEADERS = ["timestamp", "records_processed", "status", "error_message"]
 
+SHADOW_TAB = "Sync_Shadow"
+SHADOW_HEADERS = [
+    "timestamp", "since_utc", "contacts_changed", "planned", "true_changes", "missed", "missed_detail",
+]
+
 REPORT_ARCHIVE_TAB = "Report_Archive"
 REPORT_ARCHIVE_HEADERS = [
     "report_type",
@@ -233,6 +238,17 @@ class SheetsClient:
             r = r + [""] * (len(header) - len(r))
             rows.append(dict(zip(header, r)))
         return rows
+
+    def log_shadow(self, entry: dict):
+        """One row per shadow-mode comparison (see app/incremental.py). Holds only
+        counts, opportunity ids and column names, never client data."""
+        ws = self._get_or_create_ws(SHADOW_TAB, len(SHADOW_HEADERS))
+        if not ws.acell("A1").value:
+            ws.update(values=[SHADOW_HEADERS], range_name="A1")
+        ws.append_row(
+            [datetime.now(timezone.utc).isoformat()] + [entry.get(col, "") for col in SHADOW_HEADERS[1:]],
+            value_input_option="RAW",
+        )
 
     def append_report_archive(self, entry: dict):
         """Appends one row to Report_Archive — never overwrites, this tab

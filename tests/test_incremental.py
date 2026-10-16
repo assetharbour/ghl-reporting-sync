@@ -66,7 +66,7 @@ class FakeGHL:
 class FakeSheets:
     def __init__(self, values, last_success=LAST_SUCCESS):
         self.values, self.last_success = values, last_success
-        self.reads, self.upserts, self.stale, self.logs = 0, [], [], []
+        self.reads, self.upserts, self.stale, self.logs, self.shadow = 0, [], [], [], []
 
     def get_last_success_time(self):
         return self.last_success
@@ -87,6 +87,9 @@ class FakeSheets:
 
     def log_sync(self, status, records, error=""):
         self.logs.append((status, records, error))
+
+    def log_shadow(self, entry):
+        self.shadow.append(entry)
 
 
 def run(coro):
@@ -273,6 +276,9 @@ def test_shadow_reports_zero_missed_when_every_change_is_planned(shadow_logs):
     snapshot = run(incremental.shadow_check(ghl, sheets, [o for o, _ in new_pairs], full_rows(new_pairs)))
     assert snapshot is values
     assert "true_changes=1" in shadow_logs.text and "missed=0" in shadow_logs.text
+    entry = sheets.shadow[0]
+    assert (entry["contacts_changed"], entry["planned"], entry["true_changes"], entry["missed"]) == (1, 1, 1, 0)
+    assert entry["missed_detail"] == "" and entry["since_utc"]
 
 
 def test_shadow_flags_a_change_ghl_did_not_report(shadow_logs):
@@ -280,8 +286,11 @@ def test_shadow_flags_a_change_ghl_did_not_report(shadow_logs):
     changed_contact = contact("c1", advisor="Xavier", admin_call="Answered")
     new_pairs = [(pairs[0][0], changed_contact), pairs[1]]
     ghl = FakeGHL([o for o, _ in new_pairs], changed=[])           # search says: nothing changed
-    run(incremental.shadow_check(ghl, FakeSheets(values), [o for o, _ in new_pairs], full_rows(new_pairs)))
+    sheets = FakeSheets(values)
+    run(incremental.shadow_check(ghl, sheets, [o for o, _ in new_pairs], full_rows(new_pairs)))
     assert "missed=1" in shadow_logs.text
+    assert sheets.shadow[0]["missed"] == 1 and sheets.shadow[0]["missed_detail"] == "o1:admin_call_status"
+    assert "Ann" not in str(sheets.shadow)                           # ids and column names only
     assert "MISSED opportunity=o1 columns=admin_call_status" in shadow_logs.text
     assert "Ann" not in shadow_logs.text                             # column names only, no values
 
@@ -534,3 +543,55 @@ def test_upsert_and_stale_cleanup_reuse_a_snapshot_without_rereading():
     live = {f"o{i}" for i in range(29)}                                   # o29 is gone: 1 of 30 is under the 10% rail
     removed = client.remove_stale_rows(live, values=values)
     assert removed["removed"] == 1 and ws.full_reads == 0
+
+
+def test_shadow_records_incomplete_lookups_and_survives_a_failing_log_tab():
+    pairs, values = baseline()
+    ghl = FakeGHL([o for o, _ in pairs])
+    ghl.search_fails = True
+    sheets = FakeSheets(values)
+    run(incremental.shadow_check(ghl, sheets, [o for o, _ in pairs], full_rows(pairs)))
+    assert sheets.shadow[0]["missed_detail"] == "changed-contact lookup incomplete"
+
+    class NoLogTab(FakeSheets):
+        def log_shadow(self, entry):
+            raise RuntimeError("tab unavailable")
+
+    assert run(incremental.shadow_check(FakeGHL([o for o, _ in pairs]), NoLogTab(values), [o for o, _ in pairs], full_rows(pairs))) is values
+
+
+def test_log_shadow_creates_the_header_once_and_appends_a_row():
+    class Cell:
+        def __init__(self, value):
+            self.value = value
+
+    class WS(FakeWorksheet):
+        def __init__(self, header):
+            super().__init__([])
+            self.header, self.updated, self.appended_row = header, [], []
+
+        def acell(self, a1):
+            return Cell(self.header)
+
+        def update(self, values, range_name):
+            self.updated.append((values, range_name))
+
+        def append_row(self, values, **kwargs):
+            self.appended_row.append((values, kwargs))
+
+    entry = {"since_utc": "s", "contacts_changed": 2, "planned": 3, "true_changes": 3, "missed": 0, "missed_detail": ""}
+
+    fresh = WS(header=None)                                  # empty tab: header gets written
+    sheets_with(fresh).log_shadow(entry)
+    assert fresh.updated[0][0][0] == ["timestamp", "since_utc", "contacts_changed", "planned", "true_changes", "missed", "missed_detail"]
+    values, kwargs = fresh.appended_row[0]
+    assert values[1:] == ["s", 2, 3, 3, 0, ""] and datetime.fromisoformat(values[0]).tzinfo is not None
+    assert kwargs["value_input_option"] == "RAW"
+
+    existing = WS(header="timestamp")                        # header already there: not rewritten
+    sheets_with(existing).log_shadow(entry)
+    assert existing.updated == [] and len(existing.appended_row) == 1
+
+
+def test_http_request_logging_is_silenced_for_sync_runs():
+    assert logging.getLogger("httpx").level == logging.WARNING

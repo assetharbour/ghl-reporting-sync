@@ -232,6 +232,13 @@ async def run(ghl, sheets, now=None):
 
 # --------------------------------------------------------------- shadow mode
 
+def _record_shadow(sheets, entry: dict):
+    """Durable copy of the shadow result (Vercel's per-request log is too crowded to rely on)."""
+    try:
+        sheets.log_shadow(entry)
+    except Exception:
+        logger.exception("shadow: could not write Sync_Shadow")
+
 async def shadow_check(ghl, sheets, opportunities: list, rows: list):
     """Run beside a normal FULL sync: log which rows really changed versus which
     an incremental run would have rebuilt. A non-zero `missed` is the signal that
@@ -247,11 +254,13 @@ async def shadow_check(ghl, sheets, opportunities: list, rows: list):
         last_success = sheets.get_last_success_time()
         if last_success is None:
             logger.info("shadow: no previous successful sync, nothing to compare")
+            _record_shadow(sheets, {"missed_detail": "no previous successful sync"})
             return values
         since = last_success - OVERLAP
         changed = await ghl.search_contacts_updated_since(since)
         if changed is None:
             logger.warning("shadow: changed-contact lookup incomplete this run")
+            _record_shadow(sheets, {"since_utc": since.isoformat(), "missed_detail": "changed-contact lookup incomplete"})
             return values
         plan, reasons = plan_changes(opportunities, existing, {c["id"] for c in changed}, since)
         planned = {o["id"] for o in plan}
@@ -272,6 +281,11 @@ async def shadow_check(ghl, sheets, opportunities: list, rows: list):
         )
         for oid in missed[:10]:
             logger.warning("shadow MISSED opportunity=%s columns=%s", oid, ",".join(true_changes[oid]))
+        _record_shadow(sheets, {
+            "since_utc": since.isoformat(), "contacts_changed": len(changed), "planned": len(planned),
+            "true_changes": len(true_changes), "missed": len(missed),
+            "missed_detail": "; ".join(f"{oid}:{','.join(true_changes[oid])}" for oid in missed[:10]),
+        })
     except Exception:
         logger.exception("shadow check failed")
     return values
