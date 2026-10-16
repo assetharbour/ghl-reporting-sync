@@ -3,3 +3,7 @@
 .env*.local
 __pycache__/
 *.pyc
+tests/
+scripts/
+pytest.ini
+requirements-dev.txt

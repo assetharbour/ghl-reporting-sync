@@ -50,3 +50,12 @@ MONTHLY_REPORT_VALUE_ID = "DeGLq4rXKreKLLGPVpb3"
 # unauthenticated recipient — confirmed with a direct curl (real 200
 # JSON, no redirect).
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://assetharbour-reports.vercel.app")
+
+# Evonex webhook receiver. Deliberately optional at import: the sync and
+# report endpoints must keep working even if these are unset.
+# EVONEX_WEBHOOK_TOKEN is a comma-separated list so a rotated token can be
+# added alongside the old one.
+EVONEX_WEBHOOK_TOKENS = [
+    t.strip() for t in os.environ.get("EVONEX_WEBHOOK_TOKEN", "").split(",") if t.strip()
+]
+EVONEX_SHEET_ID = os.environ.get("EVONEX_SHEET_ID", "").strip()

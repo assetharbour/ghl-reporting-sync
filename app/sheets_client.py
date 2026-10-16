@@ -31,10 +31,10 @@ REPORT_ARCHIVE_HEADERS = [
 
 
 class SheetsClient:
-    def __init__(self):
+    def __init__(self, sheet_id: str = None):
         creds_json = json.loads(config.GOOGLE_SERVICE_ACCOUNT_JSON)
         self.gc = gspread.service_account_from_dict(creds_json)
-        self.sheet = self.gc.open_by_key(config.GOOGLE_SHEET_ID)
+        self.sheet = self.gc.open_by_key(sheet_id or config.GOOGLE_SHEET_ID)
 
     def _get_or_create_ws(self, title: str, cols: int):
         try:
