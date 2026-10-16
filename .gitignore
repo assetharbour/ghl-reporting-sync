@@ -7,3 +7,5 @@ __pycache__/
 
 .vercel
 .env*
+
+test_*.pdf
