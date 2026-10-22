@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -17,6 +17,8 @@ REQUEST_TIMEOUT = 30.0
 MAX_RETRIES = 4
 CONTACT_SEARCH_PAGE_SIZE = 100
 CONTACT_SEARCH_MAX_PAGES = 20
+CALENDAR_API_VERSION = "2021-04-15"   # the calendars endpoints use this version header
+CALENDAR_WINDOW_DAYS = 31
 
 
 class GHLClient:
@@ -139,6 +141,82 @@ class GHLClient:
                     return list(found.values())
 
         logger.warning("Contact search hit the %d-page cap; treating it as incomplete", CONTACT_SEARCH_MAX_PAGES)
+        return None
+
+    async def get_users(self):
+        """{user id: name} for the location, live. The static USERS map in
+        field_mapping is out of date (it left 85 of 196 appointment bookers
+        unresolved), so anything that names people reads this instead.
+        None on failure."""
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            data = await self._get_json(
+                client, "/users/", {"locationId": config.GHL_LOCATION_ID}, self._get_headers()
+            )
+        if data is None:
+            return None
+        return {u["id"]: u.get("name", "") for u in data.get("users", []) if u.get("id")}
+
+    async def get_calendar_events(self, calendar_id: str, start: datetime, end: datetime):
+        """Every event of one calendar between two datetimes (by start time), fetched
+        in 31-day windows. Each event carries createdBy.userId (who booked it),
+        assignedUserId (the advisor), dateAdded, startTime and appointmentStatus.
+        Returns None if any window fails, so callers never act on a partial list."""
+        found, cursor = {}, start
+        headers = {**self._get_headers(), "Version": CALENDAR_API_VERSION}
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            while cursor < end:
+                window_end = min(cursor + timedelta(days=CALENDAR_WINDOW_DAYS), end)
+                params = {
+                    "locationId": config.GHL_LOCATION_ID, "calendarId": calendar_id,
+                    "startTime": int(cursor.timestamp() * 1000), "endTime": int(window_end.timestamp() * 1000),
+                }
+                data = await self._get_json(client, "/calendars/events", params, headers)
+                if data is None:
+                    return None
+                for event in data.get("events") or []:
+                    if event.get("id"):
+                        found[event["id"]] = event
+                cursor = window_end
+        return list(found.values())
+
+    async def search_contacts_with_field(self, field_id: str):
+        """Contacts (custom fields included) that have a value in one custom field.
+        None if the result might be incomplete."""
+        found = {}
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            for page in range(1, CONTACT_SEARCH_MAX_PAGES + 1):
+                body = {
+                    "locationId": config.GHL_LOCATION_ID, "page": page, "pageLimit": CONTACT_SEARCH_PAGE_SIZE,
+                    "filters": [{"field": f"customFields.{field_id}", "operator": "exists"}],
+                }
+                data = await self._post_json(client, "/contacts/search", body)
+                if data is None:
+                    return None
+                batch = data.get("contacts") or []
+                for contact in batch:
+                    if contact.get("id"):
+                        found[contact["id"]] = contact
+                if len(batch) < CONTACT_SEARCH_PAGE_SIZE:
+                    return list(found.values())
+        logger.warning("Field search hit the %d-page cap; treating it as incomplete", CONTACT_SEARCH_MAX_PAGES)
+        return None
+
+    async def _get_json(self, client: httpx.AsyncClient, path: str, params: dict, headers: dict):
+        """GET with retry/backoff (honours 429 Retry-After). None on final failure."""
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = await client.get(f"{config.GHL_BASE_URL}{path}", headers=headers, params=params)
+                if resp.status_code == 429 and attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(float(resp.headers.get("Retry-After") or 2 ** (attempt + 1)))
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(2 ** (attempt + 1))
+                    continue
+                logger.error("GET %s failed: %s", path, type(e).__name__)
+                return None
         return None
 
     async def _post_json(self, client: httpx.AsyncClient, path: str, body: dict):

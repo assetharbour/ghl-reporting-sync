@@ -6,3 +6,4 @@ google-auth==2.29.0
 python-dotenv==1.0.1
 python-dateutil==2.9.0.post0
 reportlab==4.2.5
+tzdata==2024.2

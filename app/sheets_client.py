@@ -74,6 +74,16 @@ class SheetsClient:
         if not existing or not any(existing[0]):
             ws.update(values=[COLUMNS], range_name="A1")
             existing = [COLUMNS]
+        elif existing[0] != COLUMNS:
+            header = list(existing[0])
+            if len(header) < len(COLUMNS) and COLUMNS[: len(header)] == header:
+                # New columns were appended to COLUMNS: extend the header row (append only; the
+                # existing columns keep their positions and no existing data moves).
+                ws.update(values=[COLUMNS], range_name="A1")
+                existing = [COLUMNS] + existing[1:]
+                logger.info("Leads header extended from %d to %d columns", len(header), len(COLUMNS))
+            else:
+                logger.warning("Leads header differs from COLUMNS and is not a prefix of it; leaving it as is")
 
         # opportunity_id (column B) is the true unique key — a GHL contact
         # can have multiple opportunities (verified live: 10 contacts
@@ -199,7 +209,7 @@ class SheetsClient:
             return None
         last = values[-1]
         last = last + [""] * (len(LOG_HEADERS) - len(last))
-        return dict(zip(LOG_HEADERS, last))
+        return dict(zip(LOG_HEADERS, last, strict=False))
 
     def get_last_success_time(self):
         """Timestamp (UTC datetime) of the most recent 'success' Sync_Log row, or
@@ -236,7 +246,7 @@ class SheetsClient:
         rows = []
         for r in values[1:]:
             r = r + [""] * (len(header) - len(r))
-            rows.append(dict(zip(header, r)))
+            rows.append(dict(zip(header, r, strict=False)))
         return rows
 
     def log_shadow(self, entry: dict):

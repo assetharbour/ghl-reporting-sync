@@ -54,6 +54,11 @@ CUSTOM_FIELD_IDS = {
     "broker_fee":                           "nWtA92kgcxzTD98j0aQJ",
     "expected_procuration_fee":             "cfJm4Ty7COUrRle1k4vL",
     "solicitor_commission":                 "W9ktEA2AoQYyOx8YhtRG",
+    # Contact fields created 20 Oct 2026 (Admin folder). Fact Find Outcome drives the sales
+    # team's pay and conversion reporting; Docs Requested triggers the S5 chase.
+    "fact_find_outcome":                    "fTifKixWDw4U92UpnOJ7",
+    "fact_find_date":                       "BGI6dOCmacnxYlMVBDqq",
+    "docs_requested":                       "DnjBkZQsPXeSeAui3NWD",
 }
 
 # Negotiator (SINGLE_OPTIONS) confirmed via live lookup to return the clean
@@ -64,8 +69,12 @@ PIPELINE = {
     "id": "EQyj0fwCvT8vrLEGTw5I",
     "stages": {
         "42861e5d-6f4d-49ab-9b9d-8316a4da198c": "Lead Received",
-        "68272d52-f2b8-47ce-b657-718b465c062a": "Admin Contacted",
+        # Renamed in GHL from "Admin Contacted" (the live pipeline API returns "Client Contacted", checked 22 Oct 2026).
+        "68272d52-f2b8-47ce-b657-718b465c062a": "Client Contacted",
         "d803ee87-fdec-46e9-a94a-35b9cb5c851b": "Appointment Booked",
+        # New stage between Appointment Booked and Interested / Not Ready (S3 moves a case here when the advisor
+        # call is Answered). Unmapped, its cases had a BLANK stage in the Leads sheet.
+        "629e80ae-4f0f-4334-91ae-c677d3c11648": "Post Appointment",
         "0acbc39a-c443-461e-891e-3806632eac2e": "Interested / Not Ready",
         "fb49a23f-58c2-475d-82c1-c9f35e7b3672": "Docs Requested",
         "a333899d-f065-44e2-9c05-af4f0c9dca84": "Docs Received / Full Review",

@@ -9,3 +9,7 @@ __pycache__/
 .env*
 
 test_*.pdf
+.hypothesis/
+.coverage
+.ruff_cache/
+.pytest_cache/

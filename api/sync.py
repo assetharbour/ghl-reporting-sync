@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from dateutil.parser import parse as parse_date
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 
-from app import config, ghl_client, incremental, join, sheets_client
+from app import audit_runner, config, ghl_client, incremental, join, sheets_client, writeback
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +101,12 @@ async def do_full_sync(sheets: sheets_client.SheetsClient = None, force_full: bo
         result, rows_written = outcome
 
         sheets.log_sync("success", rows_written)
+        # Created By / Booked By locks, flags and the Appointments tab (no-op unless
+        # FIELD_AUDIT=on; reads GHL, writes only the sheet, and can never raise).
+        try:
+            await audit_runner.run_safely(ghl)
+        except Exception:                      # run_safely never raises; this keeps a future bug from failing a good sync
+            logger.exception("Field audit crashed (the sync itself succeeded)")
         incremental.logger.info(
             "sync mode=%s opportunities=%s rows_written=%s rows_removed=%s ms=%d",
             result["mode"], result["opportunities_fetched"], rows_written,
@@ -129,6 +135,10 @@ async def run_sync(
 
     start = datetime.now(timezone.utc)
     sheets = sheets_client.SheetsClient()
+
+    # Safety net for the Evonex call write-back (no-op while WRITEBACK_MODE is off;
+    # never raises, so it cannot affect the sync).
+    background_tasks.add_task(writeback.sweep_safely)
 
     if _lock_is_held(sheets):
         return {"status": "skipped", "reason": "previous sync still running"}

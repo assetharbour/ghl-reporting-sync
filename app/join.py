@@ -43,13 +43,16 @@ COLUMNS = [
     # total_revenue is blank (not 0) when none of the three are set, so a
     # confirmed-zero case is distinguishable from a not-yet-recorded one.
     "broker_fee", "expected_procuration_fee", "solicitor_commission", "total_revenue",
+    # Appended 22 Oct 2026 for sales reporting: the full fact find outcome (one of Full Fact Find Took
+    # Place / Advice Given / Review / Annual Review / Amendment - YES), its date, and Docs Requested.
+    "fact_find_outcome", "fact_find_date", "docs_requested",
 ]
 
 DATE_FIELDS = {
     "exchange_date", "protection_start_date", "erc_date",
     "mortgage_product_roll_off_date", "completion_date",
     "first_contact_time", "docs_received_time", "application_time",
-    "offer_time", "completion_time",
+    "offer_time", "completion_time", "fact_find_date",
 }
 
 

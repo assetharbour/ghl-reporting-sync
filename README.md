@@ -77,3 +77,78 @@ unchanged row keeps its old `last_synced` (the daily full refresh rewrites them 
 Each run logs one line: `sync mode=... opportunities=... rows_written=... rows_removed=... ms=...`.
 
 Tests: `python -m pytest` (needs `requirements-dev.txt`).
+
+## Evonex to GHL call write-back (`WRITEBACK_MODE`)
+
+Read `docs/ghl/GHL_Backend_Writeback_Spec.md` and `docs/ghl/GHL_Workflows_S1_S6_Reference.md` first.
+The backend writes FACTS (call status, attempt counter, last call date and caller) onto the GHL
+contact; GHL workflows make every decision. Only the six fields in `WRITE_FIELD_IDS`
+(`app/writeback_rules.py`) can ever be written, and a request containing any other field is refused.
+
+Flow: an Evonex `ENDCALL` / `CANCELCALL` is stored as before and answered `200`; **after** the response
+`app/writeback.py` waits out a 5 s settle period (Evonex sends a `CANCELCALL` about 1 s *before* the
+`STARTCALL` on ~4 % of connected calls), rebuilds the call from `Evonex_Events`, classifies it
+(no `STARTCALL` = No Answer; talk < 60 s = Voicemail; >= 60 s = Answered), finds the contact by
+phone, claims the cid and contact in the `Writeback_Log` tab, reads the contact fresh, picks the
+admin or advisor pair from `call_phase`, writes status + counter + `last_call_at` (London date) +
+`last_call_by` in one `PUT`, then reads the contact back and records `written` /
+`written_unverified`. `POST /api/evonex/writeback/sweep` (header `x-cron-secret`, also run by every
+`/api/sync` call) retries calls whose inline attempt did not finish.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `WRITEBACK_MODE` | `off` | `off` nothing runs; `dry_run` does everything except the PUT and logs what it would write; `on` writes. Any other value = off |
+| `WRITEBACK_TALK_SECONDS` | 60 | Answered / Voicemail threshold |
+| `WRITEBACK_SETTLE_SECONDS` | 5 | quiet time before a call is judged finished |
+| `WRITEBACK_MAX_AGE_MINUTES` | 120 | older calls are never written |
+| `WRITEBACK_ADVISOR_NAMES` | the 6 advisor-name options | callers allowed to write the advisor pair |
+| `WRITEBACK_ADVISOR_STRICT` | false | true = only the case's own advisor writes the advisor pair |
+
+`Writeback_Log` (private Evonex sheet) is the audit trail and idempotency store: statuses `claimed`,
+`written`, `written_unverified`, `dry_run`, `skipped` (with a reason such as `phase_empty`,
+`no_contact_match`, `ambiguous_contact`, `advisor_not_matched`, `too_old`), `released`, `failed`.
+It holds ids, staff names and outcomes only, never customer phone numbers.
+
+## Appointments, Created By / Booked By locking and flags (`FIELD_AUDIT`)
+
+One audit cycle runs inside every `/api/sync` (after the Leads sync, can never fail it) when `FIELD_AUDIT=on`.
+It only READS GHL and writes four tabs in the private Leads spreadsheet:
+
+| Tab | Content |
+|---|---|
+| `Appointments` | one row per calendar appointment (`app/appointments.py`): who booked it in the calendar (`createdBy.userId`), the advisor (`assignedUserId`), booked_at, start_time, status, plus the OFFICIAL booker and its basis: `field` (the Booked By field was filled, first value locked) or `calendar` (field empty, the person GHL recorded on the calendar) |
+| `Field_Locks` | the FIRST value ever seen: Created By per contact (the custom field, not GHL's native createdBy) and Booked By per appointment (`booked_by:<appointment_id>`, whenever the field is filled), plus the current value |
+| `Flags` | append-only: `created_by_changed/cleared`, `booked_by_changed/cleared`, `booked_by_missing` (no field value and no usable calendar booker), `booked_by_mismatch` (field differs from the calendar booker), `advisor_mismatch`, `appointment_with_non_advisor`, `booking_source_not_trusted`; de-duplicated by `flag_id` |
+| `Audit_State` | when the audit last completed |
+
+`app/field_audit.py` is the pure engine, `app/audit_runner.py` the cycle, `app/audit_store.py` the sheet IO,
+`app/sales_metrics.py` the KPI definitions (booked, due, showed, full fact find, conversion, round-robin fairness).
+Variables: `FIELD_AUDIT` (off/on), `FIELD_AUDIT_SINCE` (appointments booked earlier are never flagged),
+`APPOINTMENT_CALENDAR_IDS` (default the S3 Appointment Calendar), `BOOKED_BY_GRACE_HOURS` (24), `TRUSTED_BOOKING_SOURCES` (default `contactdetails_page`), `SALES_TEAM_NAMES` (Harry Kalsi, Ava Morris-Boundy, Hugo Sharpe).
+
+## Call evidence and call activity (`CALL_EVIDENCE`)
+
+Advisor "meetings" are phone calls made from Evonex at the appointment time (the calendar only drives reminders), so the audit can check each
+finished appointment against the advisor's call. Needs `FIELD_AUDIT=on`, `CALL_EVIDENCE=on` and `EVONEX_SHEET_ID`. Pure engine: `app/call_evidence.py`;
+the step runs inside the audit cycle (`call_evidence_step` in `app/audit_runner.py`) and can never stop the rest of the audit. It reads the private
+Evonex sheet and the contacts' phone numbers (in memory only) and writes two more tabs in the Leads spreadsheet, with no phone numbers:
+
+| Tab | Content |
+|---|---|
+| `Call_Evidence` | one row per finished appointment: result (`long_call`, `conversation`, `short_call`, `not_answered`, `other_caller`, `no_call`, `no_phone`), advisor calls, connected calls, best talk seconds, minutes from the start to the first connected call, caller |
+| `Call_Activity` | outbound calls per London day per caller: calls, connected, conversations, long calls, no answers, talk seconds |
+
+Rules: a call counts when it started within `CALL_MATCH_WINDOW_MINUTES` (120) either side of the appointment start, to the contact's number, by the
+appointment's advisor (names matched like Evonex spells them). A connected call of `CALL_CONVERSATION_SECONDS` (60) is a conversation and of
+`CALL_LONG_SECONDS` (600) a long call (a first guess from the first week of calls; revisit when Asset Harbour says how long a fact find runs). An appointment is
+judged only once its window has closed (+15 min) and only if the Evonex history reaches back before the window, so history that starts later never produces false
+"no call" results. A row is recomputed until 36 hours after the window closed, then frozen. The calendar status is never changed: three flags are raised
+instead, once per appointment: `showed_without_call`, `noshow_with_call`, `unmarked_with_call` (a day after the appointment). First run reads up to 12,000
+event rows and looks back 30 days; later runs read 1,500 rows and look back 4 days.
+
+Optional `BOOKER_OWNER_FLAG=on` raises `booker_not_owner` when the official booker is not the contact owner (the sales person), judged only in the first
+`BOOKER_OWNER_WINDOW_HOURS` (48) after booking. Off by default: in the first week of real data 31 of 37 bookings had another owner (Anita, Alison, Sarah ...).
+
+## QA
+
+The 22 Oct 2026 QA report (approach, results, defect log, UAT checklist, residual risks, how to repeat) is `docs/qa/QA_REPORT_2026-10-22.md`.

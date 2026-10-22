@@ -15,10 +15,13 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+import hmac
 
-from app import config, evonex
+from fastapi import FastAPI, Header, Request
+from fastapi.responses import JSONResponse
+from starlette.background import BackgroundTask
+
+from app import config, evonex, writeback
 
 logger = logging.getLogger("evonex")
 if not logger.handlers:
@@ -39,7 +42,7 @@ def _safe(value, limit: int = 60) -> str:
 
 
 def _respond(status: int, body: dict, request_id: str, path: str, started: float,
-             event=None, subevent=None, variant="-", reason=None) -> JSONResponse:
+             event=None, subevent=None, variant="-", reason=None, background=None) -> JSONResponse:
     # Never logs rpi/rpn/on/oe/om, the raw body, the token or the signature.
     logger.info(
         "request_id=%s path=%s event=%s subevent=%s status=%s latency_ms=%d variant=%s%s",
@@ -47,12 +50,40 @@ def _respond(status: int, body: dict, request_id: str, path: str, started: float
         int((time.monotonic() - started) * 1000), variant,
         f" reason={reason}" if reason else "",
     )
-    return JSONResponse(status_code=status, content=body)
+    return JSONResponse(status_code=status, content=body, background=background)
 
 
 @app.get("/api/evonex/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/api/evonex/writeback/sweep")
+async def writeback_sweep(x_cron_secret: str = Header(None)):
+    """Safety net for the call write-back: processes finished calls whose inline
+    attempt never completed. Called by the 15-minute sync cron and callable on
+    its own. Same x-cron-secret as the other maintenance endpoints."""
+    if not x_cron_secret or not hmac.compare_digest(
+        x_cron_secret.encode("utf-8"), config.CRON_SECRET.encode("utf-8")
+    ):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    result = await asyncio.to_thread(writeback.sweep_safely)
+    return result
+
+
+# Terminal events of an outbound call: the write-back runs AFTER the response is
+# sent (the row is already durably stored, so Evonex never waits on GHL).
+_TERMINAL_SUBEVENTS = ("ENDCALL", "CANCELCALL")
+
+
+def _writeback_task(event, subevent, payload):
+    """A background task for a finished outbound call, or None."""
+    if config.WRITEBACK_MODE == "off" or event != "OUTBOUNDCALL" or subevent not in _TERMINAL_SUBEVENTS:
+        return None
+    cid = payload.get("cid")
+    if not isinstance(cid, str) or not cid:
+        return None
+    return BackgroundTask(writeback.process_cid_safely, cid)
 
 
 @app.post("/api/evonex/{path:path}")
@@ -111,7 +142,8 @@ async def receive(path: str, request: Request):
         if not stored:
             return _respond(500, {"error": "server_error"}, request_id, path, started, event, subevent, variant, "write_failed")
 
-        return _respond(200, {}, request_id, path, started, event, subevent, variant)
+        return _respond(200, {}, request_id, path, started, event, subevent, variant,
+                        background=_writeback_task(event, subevent, payload))
 
     except Exception as exc:
         # No stack trace in the response; only the exception type is logged.
