@@ -152,35 +152,69 @@ def leads_tab(stores, rows):
     ws.update(values=[["opportunity_id", "lead_source"]] + rows, range_name="A1")
 
 
-def run_step(ghl, stores, rows, now, coverage=None):
-    calls = __import__("app.writeback_rules", fromlist=["collapse_events"]).collapse_events(rows)
-    return asyncio.run(runner.lead_speed_step(ghl, stores, calls, coverage or COVER, now, cfg()))
+HISTORY = evonex_rows(("old", "Joe Nicholls", -60 * 24 * 3, 30, "07700900999"))      # an unrelated call three days earlier: the history reaches back that far
+
+
+def run_step(ghl, stores, rows, now, history=True):
+    events = (HISTORY if history else []) + rows
+    asked = []
+
+    def reader(window):
+        asked.append(window)
+        return events
+
+    out = asyncio.run(runner.lead_speed_step(ghl, stores, reader, now, cfg()))
+    run_step.asked = asked
+    return out
 
 
 def test_the_runner_step_writes_lead_speed_skips_existing_clients_and_throttles_the_opportunity_fetch():
-    created = THU_10
-    ghl = SpeedGHL([opportunity("o1", "c1", created), opportunity("o2", "c2", created), opportunity("o3", "c3", created - timedelta(days=3))],
+    created = datetime(2026, 10, 21, 14, 50, tzinfo=UTC)                                          # ten minutes before the helper's call at 15:00
+    ghl = SpeedGHL([opportunity("o1", "c1", created), opportunity("o2", "c2", created), opportunity("o3", "c3", created - timedelta(days=30))],
                    {"c1": contact_with_phone("c1"), "c2": contact_with_phone("c2", "07700900456")})
     stores = AuditStores(sheet=FakeSheet())
     leads_tab(stores, [["o1", "Website"], ["o2", "Existing Client"], ["o3", "Veriform"]])
-    rows = evonex_rows(("k", "Hugo Sharpe", 0, 120, "07700900123"))                                # START of test_call_evidence is 21 Oct 15:00
-    # shift: use the helper's START-based times, so create the lead just before that call
-    created = datetime(2026, 10, 21, 14, 50, tzinfo=UTC)
-    ghl.opportunities = [opportunity("o1", "c1", created), opportunity("o2", "c2", created)]
+    rows = evonex_rows(("k", "Hugo Sharpe", 0, 120, "07700900123"))
     now = datetime(2026, 10, 21, 20, 0, tzinfo=UTC)
-    out = run_step(ghl, stores, rows, now, coverage=datetime(2026, 10, 16, 7, tzinfo=UTC))
-    assert out["leads"] == 1 and out["inserted"] == 1
+    out = run_step(ghl, stores, rows, now)
+    assert run_step.asked == [runner.EVENTS_BACKFILL]                                              # the long history, not the short per-cycle window
+    assert out["leads"] == 1 and out["inserted"] == 1                                              # o2 is an existing client; o3 predates the history
     row = stores.speed.read()[0]
     assert (row["opportunity_id"], row["status"], row["first_call_by"], row["first_connect_by"]) == ("o1", "called", "Hugo Sharpe", "Hugo Sharpe")
     assert float(row["minutes_to_first_call"]) == 10.0
     assert "7700" not in str(stores.sheet.tabs["Lead_Speed"].values)
     assert run_step(ghl, stores, rows, now + timedelta(minutes=30)) == {"skipped": "ran recently"}
+    assert run_step.asked == []                                                                    # throttled: nothing was read
     assert len([c for c in ghl.calls if c == ("opps",)]) == 1
-    assert run_step(ghl, stores, rows, now + timedelta(minutes=51))["leads"] == 0                       # the answered lead is final: nothing left to judge
+    assert run_step(ghl, stores, rows, now + timedelta(minutes=51))["leads"] == 0                  # the answered lead is final: nothing left to judge
 
 
-def test_the_runner_step_survives_an_empty_opportunity_list_and_missing_leads_tab():
+def test_a_throttled_run_does_not_read_the_event_history_at_all():
+    created = datetime(2026, 10, 21, 14, 50, tzinfo=UTC)
+    ghl = SpeedGHL([opportunity("o1", "c1", created)], {"c1": contact_with_phone("c1")})
+    stores = AuditStores(sheet=FakeSheet())
+    now = datetime(2026, 10, 21, 20, 0, tzinfo=UTC)
+    run_step(ghl, stores, evonex_rows(("k", "Hugo Sharpe", 0, 120, "07700900123")), now)
+    reads = []
+    out = asyncio.run(runner.lead_speed_step(ghl, stores, lambda n: reads.append(n) or [], now + timedelta(minutes=10), cfg()))
+    assert out == {"skipped": "ran recently"} and reads == []
+
+
+def test_leads_older_than_the_short_per_cycle_window_are_still_judged_from_the_long_history():
+    long_ago = datetime(2026, 10, 19, 9, 0, tzinfo=UTC)                                           # a lead from several days before the call below
+    rows = [r for r in HISTORY] + evonex_rows(("late", "Henny Lessey", 0, 300, "07700900123"))      # first call on 21 Oct 15:00
+    ghl = SpeedGHL([opportunity("o1", "c1", long_ago)], {"c1": contact_with_phone("c1")})
+    stores = AuditStores(sheet=FakeSheet())
+    out = asyncio.run(runner.lead_speed_step(ghl, stores, lambda n: rows, datetime(2026, 10, 22, 12, 0, tzinfo=UTC), cfg()))
+    assert out["leads"] == 1
+    row = stores.speed.read()[0]
+    assert row["status"] == "called" and row["first_call_by"] == "Henny Lessey" and float(row["minutes_to_first_call"]) > 24 * 60
+
+
+def test_the_runner_step_survives_an_empty_opportunity_list_missing_leads_tab_and_no_history():
     stores = AuditStores(sheet=FakeSheet())
     assert run_step(SpeedGHL([], {}), stores, [], THU_10) == {"error": "no_opportunities"}
     ghl = SpeedGHL([opportunity("o1", "c1", THU_10)], {"c1": contact_with_phone("c1")})
-    assert run_step(ghl, stores, [], THU_10 + timedelta(hours=3))["leads"] == 1                          # no Leads tab: the lead still counts
+    assert run_step(ghl, stores, [], THU_10 + timedelta(hours=3))["leads"] == 1                      # no Leads tab: the lead still counts
+    nothing = AuditStores(sheet=FakeSheet())
+    assert run_step(SpeedGHL([opportunity("o1", "c1", THU_10)], {"c1": contact_with_phone("c1")}), nothing, [], THU_10 + timedelta(hours=3), history=False)["leads"] == 0   # no events at all: nothing can be judged

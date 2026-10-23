@@ -92,15 +92,20 @@ def _refresh_evidence_flags(stores, evidence, current_flags, now) -> int:
     return len(updates)
 
 
-async def lead_speed_step(ghl, stores, calls, coverage, now, cfg) -> dict:
-    """Minutes from a new lead's creation (office-hours clock) to its first call and first connected call. Uses the opportunities
-    list, fetched at most about once an hour; writes Lead_Speed (no phone numbers)."""
+async def lead_speed_step(ghl, stores, events_reader, now, cfg) -> dict:
+    """Minutes from a new lead's creation (office-hours clock) to its first call and first connected call. About once an hour it reads the
+    opportunities list and the long Evonex history (a lead can be up to 30 days old, far beyond the short window the per-cycle call evidence
+    reads); writes Lead_Speed (no phone numbers)."""
     last = parse_dt(stores.get_state(STATE_LEAD_SPEED_RUN))
     if last is not None and now - last < LEAD_SPEED_EVERY:
         return {"skipped": "ran recently"}
     opportunities = await ghl.get_all_opportunities()
     if not opportunities:
         return {"error": "no_opportunities"}
+    rows = events_reader(EVENTS_BACKFILL)
+    stamps = [t for t in (parse_ts(r.get("ts")) for r in rows) if t]
+    coverage = min(stamps) if stamps else now             # leads created before the earliest event we hold cannot be judged
+    calls = collapse_events(rows)
     sources = {}
     try:
         values = stores.sheet.worksheet("Leads").get_all_values()
@@ -270,7 +275,7 @@ async def run_cycle(ghl, stores, cfg=config, now=None, users=None, events_reader
             ev_context = None
         if ev_context is not None:
             try:
-                evidence_summary["lead_speed"] = await lead_speed_step(ghl, stores, ev_context["calls"], ev_context["coverage"], now, cfg)
+                evidence_summary["lead_speed"] = await lead_speed_step(ghl, stores, events_reader, now, cfg)
             except Exception as exc:
                 logger.error("lead speed failed: %s", type(exc).__name__)
                 evidence_summary["lead_speed"] = {"error": type(exc).__name__}

@@ -348,6 +348,9 @@ class FakeGHL:
         self.calls.append(("updated_since", since))
         return None if self.fail_search else list(self.contacts.values())
 
+    async def get_all_opportunities(self):
+        return []                                  # speed to lead has nothing to judge in these tests
+
     async def get_all_contacts(self, ids):
         self.calls.append(("get_all", tuple(ids)))
         return {i: self.contacts[i] for i in ids if i in self.contacts}
