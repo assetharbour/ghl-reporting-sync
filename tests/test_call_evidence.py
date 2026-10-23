@@ -471,3 +471,51 @@ def test_client_name_lookups_are_bounded_per_cycle_and_finish_on_the_next(monkey
 
 def ap_rows(events):
     return events_to_rows(events, USERS)
+
+
+# ---------------------------------------------------------------- changed rules re-judge frozen rows and heal open flags
+
+def test_changed_rules_rejudge_frozen_evidence_and_resolve_flags_that_no_longer_apply():
+    ghl = FakeGHL([finished_appointment()], {"c1": contact_with_phone("c1")})
+    stores = AuditStores(sheet=FakeSheet())
+    later = START + timedelta(days=10)                                       # long after the window: the row is frozen
+    run_with_evidence(ghl, stores, EARLIER, now=later)
+    assert [r["result"] for r in stores.evidence.read()] == ["no_call"]
+    assert [(f["type"], f["status"]) for f in stores.flags.read()] == [("showed_without_call", "open")]
+    assert stores.get_state(runner.STATE_EVIDENCE_RULES) == ce.RULES_VERSION
+
+    with_call = EARLIER + evonex_rows(("k1", "Joe Nicholls", 5, 900, "07700900123"))
+    out, asked = run_with_evidence(ghl, stores, with_call, now=later + timedelta(minutes=15))
+    assert not out["call_evidence"]["rules_changed"] and asked == [runner.EVENTS_NORMAL]
+    assert [r["result"] for r in stores.evidence.read()] == ["no_call"]       # same rules: the frozen row is left alone
+
+    stores.set_state(runner.STATE_EVIDENCE_RULES, "an older version")          # the rules changed
+    out, asked = run_with_evidence(ghl, stores, with_call, now=later + timedelta(minutes=30))
+    assert out["call_evidence"]["rules_changed"] and asked == [runner.EVENTS_BACKFILL] and out["call_evidence"]["flags_refreshed"] == 1
+    assert [r["result"] for r in stores.evidence.read()] == ["long_call"]
+    flag = stores.flags.read()[0]
+    assert flag["status"] == "resolved" and flag["detail"].startswith("Resolved") and "To review" in flag["detail"]
+    assert len(stores.flags.read()) == 1                                       # healed in place, nothing duplicated
+    assert stores.get_state(runner.STATE_EVIDENCE_RULES) == ce.RULES_VERSION
+    out, _ = run_with_evidence(ghl, stores, with_call, now=later + timedelta(minutes=45))
+    assert not out["call_evidence"]["rules_changed"] and out["call_evidence"]["flags_refreshed"] == 0
+
+
+def test_an_open_flag_gets_its_text_refreshed_when_the_wording_changed_and_other_flags_are_left_alone():
+    ghl = FakeGHL([finished_appointment()], {"c1": contact_with_phone("c1")})
+    stores = AuditStores(sheet=FakeSheet())
+    later = START + timedelta(days=10)
+    run_with_evidence(ghl, stores, EARLIER, now=later)
+    row = stores.flags.read()[0]
+    stores.flags.upsert([{**row, "detail": "marked Showed, no call"}])                        # an old wording
+    other = {**row, "flag_id": "zzzz", "type": "booked_by_missing", "appointment_id": row["appointment_id"], "detail": "keep me"}
+    closed = {**row, "flag_id": "c1c1", "status": "resolved", "detail": "old closed text"}
+    unjudged = {**row, "flag_id": "u1u1", "appointment_id": "not-judged-this-cycle", "detail": "old unjudged text"}
+    stores.flags.append([other, closed, unjudged])
+    stores.set_state(runner.STATE_EVIDENCE_RULES, "old")
+    run_with_evidence(ghl, stores, EARLIER, now=later + timedelta(minutes=15))
+    flags = {f["flag_id"]: f for f in stores.flags.read()}
+    assert flags[row["flag_id"]]["detail"].startswith("To review") and flags[row["flag_id"]]["status"] == "open"
+    assert flags["zzzz"]["detail"] == "keep me" and flags["zzzz"]["status"] == "open"        # only call flags are managed here
+    assert (flags["c1c1"]["status"], flags["c1c1"]["detail"]) == ("resolved", "old closed text")         # closed flags are never reopened or rewritten
+    assert (flags["u1u1"]["status"], flags["u1u1"]["detail"]) == ("open", "old unjudged text")           # nor those of appointments not judged this cycle

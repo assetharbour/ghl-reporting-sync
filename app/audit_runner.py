@@ -17,7 +17,9 @@ from datetime import datetime, timedelta, timezone
 from app import config
 from app.appointments import contact_display_name, events_to_rows, parse_dt
 from app.audit_store import AuditStores
-from app.call_evidence import build_call_activity, build_evidence, calls_by_phone, evidence_flags, is_ready
+from app.call_evidence import (
+    EVIDENCE_FLAG_TYPES, RULES_VERSION, build_call_activity, build_evidence, calls_by_phone, evidence_flags, is_ready,
+)
 from app.field_audit import (
     F_BOOKED_BY, F_CREATED_BY, MAX_FLAGS_PER_RUN, audit_appointments, audit_created_by, snapshot, source_flags,
 )
@@ -27,6 +29,7 @@ from app.writeback_rules import collapse_events, parse_ts, to_e164
 logger = logging.getLogger("audit")
 
 STATE_LAST_RUN = "last_run_utc"
+STATE_EVIDENCE_RULES = "call_evidence_rules"
 OVERLAP = timedelta(minutes=10)
 BACK_DAYS, FORWARD_DAYS, FIRST_RUN_BACK_DAYS = 120, 90, 400
 EVENTS_NORMAL, EVENTS_BACKFILL = 1500, 12000          # Evonex event rows read per cycle (about 3 days / the whole history so far)
@@ -65,14 +68,37 @@ async def _fill_contact_names(ghl, stores, appointments, contacts) -> None:
             a["contact_name"] = contact_display_name(fetched[a["contact_id"]])
 
 
+def _refresh_evidence_flags(stores, evidence, current_flags, now) -> int:
+    """Keep open call flags in step with the latest evidence: refresh their text when it changed and mark them resolved when the
+    re-check no longer finds the mismatch. Only flags of appointments judged in THIS cycle are touched, and only open ones."""
+    evaluated = {r["appointment_id"] for r in evidence}
+    if not evaluated:
+        return 0
+    wanted = {f["flag_id"]: f for f in current_flags}
+    updates = []
+    for flag in stores.flags.read():
+        if flag.get("type") not in EVIDENCE_FLAG_TYPES or flag.get("status") != "open" or flag.get("appointment_id") not in evaluated:
+            continue
+        now_flag = wanted.get(flag["flag_id"])
+        if now_flag is None:
+            updates.append({**flag, "status": "resolved", "detail": "Resolved " + now.strftime("%d %b %Y") + ": the re-check no longer finds a mismatch. " + flag.get("detail", "")})
+        elif now_flag["detail"] != flag.get("detail"):
+            updates.append({**flag, "detail": now_flag["detail"]})
+    if updates:
+        stores.flags.upsert(updates)
+    return len(updates)
+
+
 async def call_evidence_step(ghl, stores, appointments, now, cfg, events_reader) -> tuple:
     """Match finished appointments to the advisor's Evonex call. Returns (flags, summary). Reads GHL contacts (phone
     numbers, in memory only) and the Evonex events; writes Call_Evidence and Call_Activity (no phone numbers)."""
     window = int(getattr(cfg, "CALL_MATCH_WINDOW_MINUTES", 180))
     conversation = int(getattr(cfg, "CALL_CONVERSATION_SECONDS", 60))
     long_seconds = int(getattr(cfg, "CALL_LONG_SECONDS", 600))
-    existing = {r["appointment_id"]: r for r in stores.evidence.read()}
-    backfill = not existing
+    stored = {r["appointment_id"]: r for r in stores.evidence.read()}
+    rules_changed = stores.get_state(STATE_EVIDENCE_RULES) != RULES_VERSION
+    existing = {} if rules_changed else stored             # new rules: nothing is frozen, everything in the look-back is re-judged
+    backfill = not stored or rules_changed
     asked = EVENTS_BACKFILL if backfill else EVENTS_NORMAL
     rows = events_reader(asked)
     # The Evonex history starts when the webhooks were switched on, and a read may stop short of it. Either way an
@@ -102,7 +128,10 @@ async def call_evidence_step(ghl, stores, appointments, now, cfg, events_reader)
     if activity:
         stores.activity.upsert(activity)
     flags = evidence_flags(evidence, appointments, now)
-    return flags, {"evidence": len(evidence), **{f"evidence_{k}": v for k, v in result.items()}, "activity_rows": len(activity), "backfill": backfill}
+    refreshed = _refresh_evidence_flags(stores, evidence, flags, now)
+    if rules_changed:
+        stores.set_state(STATE_EVIDENCE_RULES, RULES_VERSION)
+    return flags, {"flags_refreshed": refreshed, "rules_changed": rules_changed, "evidence": len(evidence), **{f"evidence_{k}": v for k, v in result.items()}, "activity_rows": len(activity), "backfill": backfill}
 
 
 def mode(cfg=config) -> str:

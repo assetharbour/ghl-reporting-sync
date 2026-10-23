@@ -44,6 +44,11 @@ ACTIVITY_COLUMNS = ["day", "caller", "calls", "connected", "conversations", "lon
 LONG_CALL, CONVERSATION, SHORT_CALL, NOT_ANSWERED = "long_call", "conversation", "short_call", "not_answered"
 OTHER_CALLER, NO_CALL, NO_PHONE = "other_caller", "no_call", "no_phone"
 
+# Bump this whenever the matching rules change: the next cycle then re-judges every appointment inside the look-back instead of leaving
+# frozen rows from the old rules, and open call flags are refreshed or resolved to match.
+RULES_VERSION = "2026-10-23-b"
+EVIDENCE_FLAG_TYPES = ("showed_without_call", "noshow_with_call", "unmarked_with_call")
+
 FREEZE_HOURS = 36           # an appointment's evidence stops being recomputed this long after its match window closed
 SETTLE_MINUTES = 15         # wait this long after the window closes for late ENDCALL events
 UNMARKED_AFTER_HOURS = 24   # give staff a day to mark the appointment before "call happened, not marked" is raised
