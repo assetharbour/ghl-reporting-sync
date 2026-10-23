@@ -3,7 +3,7 @@
 Every event on the sales booking calendar carries the two facts the client's pay
 and fairness reports need, set by GHL itself and not editable by staff:
   * createdBy.userId   who booked it (the sales rep logged in on the contact page)
-  * assignedUserId     the advisor the appointment is with (round robin)
+  * assignedUserId     the advisor the appointment is with (chosen by whoever books it in GHL)
 plus dateAdded (when it was booked), startTime (when it takes place) and the
 appointment status (new / confirmed / showed / noshow / cancelled / invalid).
 """

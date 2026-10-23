@@ -55,3 +55,10 @@ run (empty states), so a short gap is safe.
 
 ## G. Open client-side items (not part of this deploy)
 GHL workflows and fields for 1.10 (Contacted 1 to 6), 1.12 (auto move to Post Appointment), 1.14 (Docs Requested), 2.2 (missed-call text and task), protection status / disclaimer / 20-day task (3.5 to 3.7), Finding Property stage, Interested Not Ready reason, junk lead cleanup, Looms. Dashboard items still to build: Evonex call KPIs (1.11, 2.5), showed-to-documents conversion, revenue per salesperson (1.16), product type (needs D4).
+
+
+## H. Leadership board (built 23 Oct, local only until approved)
+- [ ] Talha checks http://localhost:5173/leadership locally and approves.
+- [ ] Backend first: push `ghl-reporting-sync` (adds the `Lead_Speed` tab; no new environment variables, office hours default to 08:00 to 18:00).
+- [ ] After the next sync: tab `Lead_Speed` exists, about 25 to 30 rows, no phone numbers; `Sync_Log` success.
+- [ ] Then push `ghl-dashboard`; open /leadership on reports.assetharbour.com and compare the headline numbers with Overview and Sales Team for the same range.

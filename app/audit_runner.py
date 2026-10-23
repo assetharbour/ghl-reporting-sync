@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from app import config
 from app.appointments import contact_display_name, events_to_rows, parse_dt
+from app.lead_speed import build_lead_speed
 from app.audit_store import AuditStores
 from app.call_evidence import (
     EVIDENCE_FLAG_TYPES, RULES_VERSION, build_call_activity, build_evidence, calls_by_phone, evidence_flags, is_ready,
@@ -30,6 +31,8 @@ logger = logging.getLogger("audit")
 
 STATE_LAST_RUN = "last_run_utc"
 STATE_EVIDENCE_RULES = "call_evidence_rules"
+STATE_LEAD_SPEED_RUN = "lead_speed_last_run"
+LEAD_SPEED_EVERY = timedelta(minutes=50)      # the opportunities list is fetched at most about once an hour for this
 OVERLAP = timedelta(minutes=10)
 BACK_DAYS, FORWARD_DAYS, FIRST_RUN_BACK_DAYS = 120, 90, 400
 EVENTS_NORMAL, EVENTS_BACKFILL = 1500, 12000          # Evonex event rows read per cycle (about 3 days / the whole history so far)
@@ -89,8 +92,47 @@ def _refresh_evidence_flags(stores, evidence, current_flags, now) -> int:
     return len(updates)
 
 
+async def lead_speed_step(ghl, stores, calls, coverage, now, cfg) -> dict:
+    """Minutes from a new lead's creation (office-hours clock) to its first call and first connected call. Uses the opportunities
+    list, fetched at most about once an hour; writes Lead_Speed (no phone numbers)."""
+    last = parse_dt(stores.get_state(STATE_LEAD_SPEED_RUN))
+    if last is not None and now - last < LEAD_SPEED_EVERY:
+        return {"skipped": "ran recently"}
+    opportunities = await ghl.get_all_opportunities()
+    if not opportunities:
+        return {"error": "no_opportunities"}
+    sources = {}
+    try:
+        values = stores.sheet.worksheet("Leads").get_all_values()
+        header = values[0]
+        oi, si = header.index("opportunity_id"), header.index("lead_source")
+        sources = {r[oi]: r[si] for r in values[1:] if len(r) > max(oi, si)}
+    except Exception:
+        sources = {}                                        # no Leads tab (tests): every lead counts
+    leads = []
+    for o in opportunities:
+        created = parse_dt(o.get("createdAt"))
+        if created and o.get("id"):
+            leads.append({"opportunity_id": o["id"], "contact_id": o.get("contactId") or "", "created_at": created, "source": sources.get(o["id"], "")})
+    existing = {r["opportunity_id"]: r for r in stores.speed.read()}
+    from app.lead_speed import is_ready
+    ready = [lead for lead in leads if is_ready(lead, existing, now, coverage)]
+    phones = {}
+    ids = sorted({lead["contact_id"] for lead in ready if lead["contact_id"]})
+    if ids:
+        for cid, contact in (await ghl.get_all_contacts(ids)).items():
+            phone = to_e164(contact.get("phone"))
+            if phone:
+                phones[cid] = phone
+    rows = build_lead_speed(ready, phones, calls_by_phone(calls), existing, now, coverage,
+                            office_start=int(getattr(cfg, "LEAD_SPEED_OFFICE_START", 8)), office_end=int(getattr(cfg, "LEAD_SPEED_OFFICE_END", 18)))
+    result = stores.speed.upsert(rows) if rows else {"inserted": 0, "updated": 0}
+    stores.set_state(STATE_LEAD_SPEED_RUN, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return {"leads": len(rows), **result}
+
+
 async def call_evidence_step(ghl, stores, appointments, now, cfg, events_reader) -> tuple:
-    """Match finished appointments to the advisor's Evonex call. Returns (flags, summary). Reads GHL contacts (phone
+    """Match finished appointments to the advisor's Evonex call. Returns (flags, summary, context). Reads GHL contacts (phone
     numbers, in memory only) and the Evonex events; writes Call_Evidence and Call_Activity (no phone numbers)."""
     window = int(getattr(cfg, "CALL_MATCH_WINDOW_MINUTES", 180))
     conversation = int(getattr(cfg, "CALL_CONVERSATION_SECONDS", 60))
@@ -131,7 +173,7 @@ async def call_evidence_step(ghl, stores, appointments, now, cfg, events_reader)
     refreshed = _refresh_evidence_flags(stores, evidence, flags, now)
     if rules_changed:
         stores.set_state(STATE_EVIDENCE_RULES, RULES_VERSION)
-    return flags, {"flags_refreshed": refreshed, "rules_changed": rules_changed, "evidence": len(evidence), **{f"evidence_{k}": v for k, v in result.items()}, "activity_rows": len(activity), "backfill": backfill}
+    return flags, {"flags_refreshed": refreshed, "rules_changed": rules_changed, "evidence": len(evidence), **{f"evidence_{k}": v for k, v in result.items()}, "activity_rows": len(activity), "backfill": backfill}, {"calls": calls, "coverage": coverage}
 
 
 def mode(cfg=config) -> str:
@@ -220,11 +262,18 @@ async def run_cycle(ghl, stores, cfg=config, now=None, users=None, events_reader
     evidence_summary = None
     if events_reader is not None and getattr(cfg, "CALL_EVIDENCE", "off") == "on":
         try:
-            ev_flags, evidence_summary = await call_evidence_step(ghl, stores, appointments, now, cfg, events_reader)
+            ev_flags, evidence_summary, ev_context = await call_evidence_step(ghl, stores, appointments, now, cfg, events_reader)
             flags += ev_flags
         except Exception as exc:
             logger.error("call evidence failed: %s", type(exc).__name__)
             evidence_summary = {"error": type(exc).__name__}
+            ev_context = None
+        if ev_context is not None:
+            try:
+                evidence_summary["lead_speed"] = await lead_speed_step(ghl, stores, ev_context["calls"], ev_context["coverage"], now, cfg)
+            except Exception as exc:
+                logger.error("lead speed failed: %s", type(exc).__name__)
+                evidence_summary["lead_speed"] = {"error": type(exc).__name__}
 
     known = {r["flag_id"] for r in stores.flags.read()}
     fresh = {}

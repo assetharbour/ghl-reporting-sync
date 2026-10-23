@@ -16,7 +16,7 @@ numbers or client names were printed or stored.
 | Write-back (dry run) | 161 log rows since deploy, 0 failed, 0 stuck in "claimed", 0 writes to GHL (last_call_at / last_call_by are empty on every contact) |
 
 ## Findings that need a decision
-1. **CRITICAL: most appointments are on calendars the reports do not read.** The reports read only the S3 round-robin calendar (196 events in 120 days).
+1. **CRITICAL: most appointments are on calendars the reports do not read.** The reports read only the S3 Appointment Calendar (a calendar of type round robin in GHL, although the advisor is chosen by whoever books) (196 events in 120 days).
    The other calendars hold 508 more appointments with contacts (Ed Ford's personal calendar alone has 220). In the last 30 days: 91 of 249 appointments
    booked were on S3. For the sales team (Harry, Ava, Hugo): 81 on S3 against 160 on all calendars (Hugo 30 vs 80, Harry 18 vs 43, Ava 33 vs 37). Since
    21 Oct 13:25 nothing has been booked on S3 at all: 19 appointments were booked on 22 Oct on advisors' personal calendars (Ed Ford, Anthony Fox,

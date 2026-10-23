@@ -122,7 +122,7 @@ It only READS GHL and writes four tabs in the private Leads spreadsheet:
 | `Audit_State` | when the audit last completed |
 
 `app/field_audit.py` is the pure engine, `app/audit_runner.py` the cycle, `app/audit_store.py` the sheet IO,
-`app/sales_metrics.py` the KPI definitions (booked, due, showed, full fact find, conversion, round-robin fairness).
+`app/sales_metrics.py` the KPI definitions (booked, due, showed, full fact find, conversion, appointments per advisor).
 Variables: `FIELD_AUDIT` (off/on), `FIELD_AUDIT_SINCE` (appointments booked earlier are never flagged),
 `APPOINTMENT_CALENDAR_IDS` (default the S3 Appointment Calendar), `BOOKED_BY_GRACE_HOURS` (24), `TRUSTED_BOOKING_SOURCES` (default `contactdetails_page`), `SALES_TEAM_NAMES` (Harry Kalsi, Ava Morris-Boundy, Hugo Sharpe).
 
@@ -145,6 +145,15 @@ judged only once its window has closed (+15 min) and only if the Evonex history 
 "no call" results. A row is recomputed until 36 hours after the window closed, then frozen. The calendar status is never changed: three flags are raised
 instead, once per appointment: `showed_without_call`, `noshow_with_call`, `unmarked_with_call` (a day after the appointment). First run reads up to 12,000
 event rows and looks back 30 days; later runs read 1,500 rows and look back 4 days.
+
+### Speed to lead (`Lead_Speed`, part of the call evidence step)
+
+`app/lead_speed.py` measures how long each new lead waits for its first call and its first connected call (Evonex outbound calls to the contact's number,
+from the opportunity's creation). The response clock starts when the office opens (`LEAD_SPEED_OFFICE_START` 8 to `LEAD_SPEED_OFFICE_END` 18, Monday to Friday,
+Europe/London; bank holidays count as working days), so a lead that arrives overnight is not late and a call before opening counts as 0 minutes. Existing
+Clients are not new enquiries and are skipped; so are leads created before the Evonex history began. Rows (`Lead_Speed` tab): status (`called`, `not_called`
+after an hour, `waiting`, `no_phone`), first caller, minutes to first call, first connected caller and minutes. A row is final once a call connected, or after
+14 days; leads older than 30 days are not re-judged. The opportunities list is fetched at most about once an hour for this.
 
 Optional `BOOKER_OWNER_FLAG=on` raises `booker_not_owner` when the official booker is not the contact owner (the sales person), judged only in the first
 `BOOKER_OWNER_WINDOW_HOURS` (48) after booking. Off by default: in the first week of real data 31 of 37 bookings had another owner (Anita, Alison, Sarah ...).

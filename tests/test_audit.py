@@ -520,10 +520,10 @@ def test_only_full_fact_find_outcomes_count(text, expected):
     assert sm.is_full_fact_find(text) is expected
 
 
-def test_round_robin_fairness_against_an_equal_share_and_non_advisors():
+def test_advisor_distribution_counts_appointments_per_advisor_and_reports_non_advisors():
     appts = [appt(str(i), f"c{i}", advisor="Joe Nicholls") for i in range(6)] + [appt("x", "cx", advisor="Xavier Collin"), appt("y", "cy", advisor="Anita Andrews")]
-    table = {r["person"]: r for r in sm.round_robin_fairness(appts, ["Joe Nicholls", "Xavier Collin", "Cecilia Szabo"])}
-    assert table["Joe Nicholls"]["appointments"] == 6 and table["Joe Nicholls"]["vs_equal"] == pytest.approx(11 / 3)
+    table = {r["person"]: r for r in sm.advisor_distribution(appts, ["Joe Nicholls", "Xavier Collin", "Cecilia Szabo"])}
+    assert table["Joe Nicholls"]["appointments"] == 6 and table["Joe Nicholls"]["share"] == pytest.approx(6 / 7) and "vs_equal" not in table["Joe Nicholls"]
     assert table["Cecilia Szabo"]["appointments"] == 0 and table["(not a listed advisor)"]["appointments"] == 1
 
 
@@ -599,5 +599,5 @@ def test_the_period_can_apply_to_the_appointment_date_instead_of_the_booked_date
     held = sm.build([a, b], {}, now, start, end, date_field="start_time")[0]
     assert (booked["booked"], booked["upcoming"]) == (1, 1)            # only b was booked in October, and it is still to come
     assert (held["booked"], held["showed"], held["upcoming"]) == (1, 1, 0)   # only a was held in October
-    fair = lambda f: next(r for r in sm.round_robin_fairness([a, b], ["Joe Nicholls"], start, end, date_field=f) if r["person"] == "Joe Nicholls")["appointments"]
+    fair = lambda f: next(r for r in sm.advisor_distribution([a, b], ["Joe Nicholls"], start, end, date_field=f) if r["person"] == "Joe Nicholls")["appointments"]
     assert (fair("booked_at"), fair("start_time")) == (1, 1)

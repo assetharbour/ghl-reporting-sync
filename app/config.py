@@ -118,7 +118,7 @@ FIELD_AUDIT = os.environ.get("FIELD_AUDIT", "off").strip().lower()
 # Appointments booked before this date are never flagged (so switching the audit on does not
 # flood the Flags tab with history). Empty = the last 7 days.
 FIELD_AUDIT_SINCE = os.environ.get("FIELD_AUDIT_SINCE", "").strip()
-# Calendars whose appointments are reported. Default: "S3 Appointment Calendar" (round robin).
+# Calendars whose appointments are reported. Default: "S3 Appointment Calendar" (the advisor appointments; whoever books picks the advisor).
 APPOINTMENT_CALENDAR_IDS = [
     c.strip() for c in os.environ.get("APPOINTMENT_CALENDAR_IDS", "Ms3bV1PlOqPVqjguHa6b").split(",") if c.strip()
 ]
@@ -148,6 +148,9 @@ CALL_MATCH_WINDOW_MINUTES = _env_number("CALL_MATCH_WINDOW_MINUTES", 180, int)
 # minute or 9 to 55 minutes. Revisit once Asset Harbour confirms how long a fact find normally runs.
 CALL_CONVERSATION_SECONDS = _env_number("CALL_CONVERSATION_SECONDS", 60, int)
 CALL_LONG_SECONDS = _env_number("CALL_LONG_SECONDS", 600, int)
+# Speed to lead (app/lead_speed.py): the office hours (Europe/London, Monday to Friday) that start a new lead's response clock.
+LEAD_SPEED_OFFICE_START = _env_number("LEAD_SPEED_OFFICE_START", 8, int)
+LEAD_SPEED_OFFICE_END = _env_number("LEAD_SPEED_OFFICE_END", 18, int)
 # Flag a booking whose booker is not the contact's owner (the sales person). OFF by default: in the first week of real data
 # 31 of 37 bookings had an owner other than the booker (Anita, Alison, Sarah ...), so it would flag most appointments until
 # lead ownership at stages 1 to 3 is cleaned up.

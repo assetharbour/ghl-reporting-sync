@@ -28,7 +28,7 @@ Definitions (agreed wording for the client):
 The booker is the OFFICIAL booker (`booked_by_official`: the calendar booker for
 bookings made inside GHL, otherwise the locked Booked By field of the booking
 form). The same table is produced per booker (the sales rep: pay and targets)
-and per advisor (who holds the meeting: workload and round-robin fairness).
+and per advisor (who holds the meeting: workload and the spread of appointments).
 `sales_team` (Harry, Ava, Hugo) marks the rows the client pays on.
 """
 
@@ -144,11 +144,11 @@ def build(appointments: list, contacts: dict, now: datetime, start=None, end=Non
     return sorted(table, key=lambda r: r["person"].lower())
 
 
-def round_robin_fairness(appointments: list, advisor_names: list, start=None, end=None, date_field: str = "booked_at") -> list:
-    """Appointments per listed advisor in the period against an equal share.
-    `vs_equal` is the advisor's count minus the equal share (positive = more than
-    their fair share). Appointments with someone who is not a listed advisor are
-    returned separately as person "(not a listed advisor)"."""
+def advisor_distribution(appointments: list, advisor_names: list, start=None, end=None, date_field: str = "booked_at") -> list:
+    """Appointments per listed advisor in the period: who the appointments were booked WITH. The person booking in GHL
+    chooses the advisor; it is not an automatic rotation, so this is a distribution, not a fairness check. `share` is the
+    advisor's part of the listed advisors' total. Appointments with someone who is not a listed advisor are returned
+    separately as person "(not a listed advisor)"."""
     counts = {name: 0 for name in advisor_names}
     other = 0
     for a in appointments:
@@ -160,11 +160,7 @@ def round_robin_fairness(appointments: list, advisor_names: list, start=None, en
         else:
             other += 1
     total = sum(counts.values())
-    share = total / len(advisor_names) if advisor_names else 0
-    rows = [
-        {"person": n, "appointments": c, "share": c / total if total else None, "vs_equal": c - share}
-        for n, c in counts.items()
-    ]
+    rows = [{"person": n, "appointments": c, "share": c / total if total else None} for n, c in counts.items()]
     if other:
-        rows.append({"person": "(not a listed advisor)", "appointments": other, "share": None, "vs_equal": None})
+        rows.append({"person": "(not a listed advisor)", "appointments": other, "share": None})
     return rows

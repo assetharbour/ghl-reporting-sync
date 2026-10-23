@@ -197,4 +197,4 @@ def test_kpi_invariants_hold_for_any_appointment_data(events, completed):
             for key in ("conversion", "conversion_to_completion", "show_rate"):
                 assert r[key] is None or 0 <= r[key] <= 1
             assert (r["conversion"] is None) == (r["due"] == 0)
-    sm.round_robin_fairness(appts, ["Joe Nicholls", "Xavier Collin"])
+    sm.advisor_distribution(appts, ["Joe Nicholls", "Xavier Collin"])

@@ -7,6 +7,7 @@ Leads spreadsheet, next to Leads and Sync_Log).
   Audit_State   one row remembering when the audit last completed
   Call_Evidence one row per finished appointment: what the advisor's Evonex call looked like (app/call_evidence.py)
   Call_Activity outbound calls per London day per caller (counts and talk time only)
+  Lead_Speed    one row per new lead: minutes to the first call and to the first connected call (app/lead_speed.py)
 
 Rows hold ids, staff names and statuses only. No client names, phone numbers or
 emails: join to the Leads tab by contact_id for anything about the client.
@@ -20,6 +21,7 @@ import gspread
 from app import config
 from app.appointments import APPT_COLUMNS
 from app.call_evidence import ACTIVITY_COLUMNS, EVIDENCE_COLUMNS
+from app.lead_speed import SPEED_COLUMNS
 from app.field_audit import FLAG_COLUMNS, LOCK_COLUMNS
 from app.sheets_client import SheetsClient
 from app.writeback_store import _with_retry
@@ -32,6 +34,7 @@ FLAGS_TAB = "Flags"
 STATE_TAB = "Audit_State"
 EVIDENCE_TAB = "Call_Evidence"
 ACTIVITY_TAB = "Call_Activity"
+SPEED_TAB = "Lead_Speed"
 STATE_COLUMNS = ["key", "value"]
 
 
@@ -120,6 +123,7 @@ class AuditStores:
         self.state = TabStore(self.sheet, STATE_TAB, STATE_COLUMNS, ["key"])
         self.evidence = TabStore(self.sheet, EVIDENCE_TAB, EVIDENCE_COLUMNS, ["appointment_id"])
         self.activity = TabStore(self.sheet, ACTIVITY_TAB, ACTIVITY_COLUMNS, ["day", "caller"])
+        self.speed = TabStore(self.sheet, SPEED_TAB, SPEED_COLUMNS, ["opportunity_id"])
 
     def get_state(self, key: str) -> str:
         for row in self.state.read():

@@ -2,7 +2,7 @@
 
 Sources checked: the project scope doc "Sales Team Reporting, Evonex and Protection Scope" (items 1.1 to 3.9), the 6 Oct
 reporting meeting summary, Sara's 9 Oct and 13 Oct emails, the 12 Oct recap, the 14 Oct "AH - New Build" thread, the 18 to 22 Oct
-tickets (fact find outcome options, annual review calls, round robin, conversion rate, "sales team = Harry, Ava, Hugo"), the S1 to S6
+tickets (fact find outcome options, annual review calls, the 22 Oct ask for a round robin, conversion rate, "sales team = Harry, Ava, Hugo"), the S1 to S6
 workflow reference and the Evonex write-back spec, and the context file.
 
 Status key: **DONE** = built, tested, shown on the dashboard. **BUILT, NOT LIVE** = built and tested but switched off until deploy.
@@ -21,7 +21,7 @@ Nothing below is deployed yet. "DONE" means done in the code you can look at on 
 | 1.4 | Appointments per salesperson: booked, date booked, appointment date, product type (Mortgage / Protection) | **PARTIAL** | Everything except product type. The calendar event does not say Mortgage or Protection. Needs a decision on where product type comes from (D4). |
 | 1.5 | Booked date AND appointment date on reports, filter by either | **DONE** (22 Oct) | Both dates are shown, and the Sales page has a "Booked date / Appointment date" switch that decides which one the date range filters (KPIs, tables, weekly charts, round robin, list). The appointment date is the calendar start time: no contact field holds it. The old Advisor Performance "Appointments Booked" figure is still based on call status (D1). |
 | 1.6 | Appointments per advisor for any day/week/month and daily busy view | **PARTIAL** | Per-advisor table for any date range, and a day-by-day view of next week. No daily view for an arbitrary past or future day. |
-| 1.7 | Round robin distribution check | **DONE** | Appointments per advisor against an equal share, with the not-a-listed-advisor bucket. |
+| 1.7 | Distribution check (asked for as "round robin") | **DONE** (reworded 23 Oct) | The advisor appointments are NOT a round robin: whoever books in GHL chooses the advisor. The Sales page chart is now "Appointments per advisor" (who each appointment was booked with), with no fair-share line or fairness wording. |
 | 1.8 | Forward week view (Monday to Friday) | **DONE** | "Next working week" cards, per day and advisor. Shown every day, not only Fridays. |
 | 1.9 | No-shows and rebooks by salesperson and week | **DONE** | Per-week no-show chart; rebooked count per rep. |
 | 1.10 | Contact attempt stages Contacted 1 to 6 | **NOT BUILT** (GHL) | Needs new GHL stages and a workflow driven by the attempt counter. The Evonex write-back (built, not live) keeps that counter up to date, so this can follow. Held earlier for the Evonex decision. |
@@ -59,6 +59,15 @@ Nothing below is deployed yet. "DONE" means done in the code you can look at on 
 | 3.8 | Protection follow-up report by advisor | **NOT BUILT** | Needs 3.5 to 3.7 first. |
 | 3.9 | Testing and handover | **PENDING** | |
 
+## Leadership board (requested 23 Oct 2026)
+
+| Ask | Status | Notes |
+|---|---|---|
+| One clean, insightful leadership board with good charts | **DONE** (local, not deployed) | `/leadership`: headline cards, honours, leaderboards (sales team, advisors, handover team), speed to lead, funnel, 12-week trend, top introducers, needs attention |
+| Who is on top in each of the three teams | **DONE** | Sales team by appointments booked; advisors and handover team by completions in the period |
+| Speed to lead | **DONE** (data since 16 Oct) | New `Lead_Speed` tab (backend deploy needed). Only 27 new leads have call data so far, so per-person speed shows from three first calls |
+| Decisions | **OPEN** | D11 Post Completion cases count as completed? (other pages say no); D12 office hours 08:00 to 18:00 Monday to Friday; D13 "Existing Client" appears as a top introducer, as on the Introducer page |
+
 ## Dashboard fixes agreed on 6 Oct
 
 | Item | Status | Notes |
@@ -85,7 +94,7 @@ Changed (clear, low risk):
 Left unchanged on purpose (major or unsure):
 - **D1** Advisor Performance "Appointments Booked / Completed" are still call-status based. Their sub-labels now say so. Switching them to the calendar changes advisor numbers the client already knows.
 - **D2** Sarah Bennett owns 87 cases but is not in any documented workflow, so those show under "Admin assignment needs review". Add her as an expected owner?
-- **D3** Round robin: Carl Gladman and Anthony Fox have had zero appointments and Anita / Ava / Harry / Hugo sit in the S3 team. Decide who is an active advisor; a protection round robin needs its own team.
+- **D3** Advisor list: Carl Gladman and Anthony Fox have had no appointments on the S3 calendar, and Anita / Ava / Harry / Hugo appear as advisors on a few. Decide who is an active advisor.
 
 ## Decisions for Talha (none blocks the staged deploy)
 
@@ -93,9 +102,10 @@ Left unchanged on purpose (major or unsure):
 |---|---|
 | D1 | Move Advisor Performance appointment KPIs to the calendar? |
 | D2 | Is Sarah Bennett an expected case owner? |
-| D3 | Active advisor list for round robin fairness; protection round robin team. |
+| D3 | Active advisor list for the appointments-per-advisor chart. |
 | D4 | Where does product type (Mortgage / Protection) come from per appointment? |
 | D5 | (resolved 22 Oct: appointment-date mode added) |
+| D11 | Completions: the Completion stage only (14 today, the same on every page), or Completion plus Post Completion (20)? 6 cases sit at Post Completion, which only follows a completion. |
 | D9 | Fact find call length: the matching treats 10 minutes or more as a long call and 1 minute or more as a conversation (first guess from the first week of calls). Confirm with Asset Harbour how long a fact find usually runs. |
 | D10 | Booker must be the lead's owner: built but OFF (`BOOKER_OWNER_FLAG`) because 31 of 37 recent bookings would be flagged. Turn on once stage 1 to 3 ownership is clean. |
 | D6 | Should a recorded completion date still count if the case was moved back? |

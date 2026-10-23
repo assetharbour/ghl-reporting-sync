@@ -16,7 +16,7 @@ BOOKED BY (per appointment, because a contact can be booked more than once)
   * A field value that differs from the calendar booker is flagged (a rep booking on someone's behalf, or a stale
     value from an earlier booking).
   * Advisor: the calendar's assigned advisor is compared with the advisor-name field, and appointments given to
-    someone who is not a listed advisor are flagged (round robin).
+    someone who is not a listed advisor are flagged.
 
 Flags are append-only and de-duplicated by a deterministic id, so the same issue
 is reported once however many sync cycles see it.
@@ -209,7 +209,7 @@ def audit_appointments(snaps: list, locks: dict, appointments: list, advisor_nam
                                "appointment is with a different advisor than the advisor-name field"))
         if advisor and not any(names_match(advisor, n) for n in advisor_names):
             flags.append(_flag("appointment_with_non_advisor", snap, "advisor", "", advisor, "", now, aid,
-                               "round robin gave this appointment to someone who is not a listed advisor"))
+                               "this appointment was booked with someone who is not a listed advisor"))
     return out_locks, flags, official
 
 

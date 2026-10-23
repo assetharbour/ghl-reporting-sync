@@ -24,6 +24,7 @@ from app import audit_runner, config  # noqa: E402
 from app.appointments import APPT_COLUMNS  # noqa: E402
 from app.audit_store import AuditStores  # noqa: E402
 from app.call_evidence import ACTIVITY_COLUMNS, EVIDENCE_COLUMNS  # noqa: E402
+from app.lead_speed import SPEED_COLUMNS  # noqa: E402
 from app.field_audit import FLAG_COLUMNS, LOCK_COLUMNS  # noqa: E402
 from app.ghl_client import GHLClient  # noqa: E402
 
@@ -93,12 +94,14 @@ async def main(since_days: int) -> None:
         "locks": table(LOCK_COLUMNS[:5], stores.locks.read()),
         "call_evidence": table(EVIDENCE_COLUMNS, stores.evidence.read()),
         "call_activity": table(ACTIVITY_COLUMNS, stores.activity.read()),
+        "lead_speed": table(SPEED_COLUMNS, stores.speed.read()),
     }
     target = os.path.join(os.path.dirname(ROOT), "ghl-dashboard", ".local-audit.json")
     with open(target, "w", encoding="utf-8") as fh:
         json.dump(out, fh)
     print(f"saved {target}")
     print(f"  appointments: {len(out['appointments']) - 1} | flags: {len(out['flags']) - 1} | created-by locks: {len([r for r in out['locks'][1:] if r[1] == 'created_by'])}")
+    print(f"  lead speed rows: {len(out['lead_speed']) - 1}")
     print(f"  call evidence: {len(out['call_evidence']) - 1} rows | call activity: {len(out['call_activity']) - 1} rows")
     print(f"  cycle: {result}")
 
