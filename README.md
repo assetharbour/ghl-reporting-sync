@@ -138,7 +138,7 @@ Evonex sheet and the contacts' phone numbers (in memory only) and writes two mor
 | `Call_Evidence` | one row per finished appointment: result (`long_call`, `conversation`, `short_call`, `not_answered`, `other_caller`, `no_call`, `no_phone`), advisor calls, connected calls, best talk seconds, minutes from the start to the first connected call, caller |
 | `Call_Activity` | outbound calls per London day per caller: calls, connected, conversations, long calls, no answers, talk seconds |
 
-Rules: a call counts when it started within `CALL_MATCH_WINDOW_MINUTES` (120) either side of the appointment start, to the contact's number, by the
+Rules: a call counts when it started within `CALL_MATCH_WINDOW_MINUTES` (180) either side of the appointment start, to the contact's number, by the
 appointment's advisor (names matched like Evonex spells them). A connected call of `CALL_CONVERSATION_SECONDS` (60) is a conversation and of
 `CALL_LONG_SECONDS` (600) a long call (a first guess from the first week of calls; revisit when Asset Harbour says how long a fact find runs). An appointment is
 judged only once its window has closed (+15 min) and only if the Evonex history reaches back before the window, so history that starts later never produces false

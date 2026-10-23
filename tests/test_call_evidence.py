@@ -80,12 +80,13 @@ def test_the_best_call_wins_when_the_advisor_rang_several_times():
     assert rows[0]["result"] == ce.LONG_CALL and rows[0]["advisor_calls"] == 3 and rows[0]["connected_calls"] == 2
 
 
-def test_the_window_is_inclusive_at_two_hours_and_excludes_beyond():
-    assert result_of([call("x", ring=120, talk=900)]) == ce.LONG_CALL
-    assert result_of([call("x", ring=-120, talk=900)]) == ce.LONG_CALL
-    assert result_of([call("x", ring=121, talk=900)]) == ce.NO_CALL
-    assert result_of([call("x", ring=-121, talk=900)]) == ce.NO_CALL
-    assert result_of([call("x", ring=121, talk=900)], window_minutes=180) == ce.LONG_CALL      # the window is configurable
+def test_the_window_is_three_hours_by_default_inclusive_and_excludes_beyond():
+    assert result_of([call("x", ring=180, talk=900)]) == ce.LONG_CALL
+    assert result_of([call("x", ring=-180, talk=900)]) == ce.LONG_CALL
+    assert result_of([call("x", ring=181, talk=900)]) == ce.NO_CALL
+    assert result_of([call("x", ring=-181, talk=900)]) == ce.NO_CALL
+    assert result_of([call("x", ring=121, talk=900)], window_minutes=120) == ce.NO_CALL         # the window is configurable
+    assert result_of([call("x", ring=121, talk=900)], window_minutes=240) == ce.LONG_CALL
 
 
 def test_only_calls_to_the_contacts_own_number_count():
@@ -109,15 +110,22 @@ def test_no_usable_phone_means_no_judgement():
     assert result_of([call("x", talk=900)], phones={}) == ce.NO_PHONE
 
 
-def test_a_call_still_in_progress_is_not_counted():
+def test_a_call_that_is_still_ringing_is_not_counted_but_a_stale_one_is_a_no_answer():
+    from app.writeback_rules import classify
     ringing = CallInfo(cid="r", rpi="07700900123", owner_name="Joe Nicholls", ring_ts=at(0))
-    assert result_of([ringing]) == ce.NO_CALL
+    assert classify(ringing, 60, at(10)) == (None, 0)                      # 10 minutes: still in progress
+    assert classify(ringing, 60, at(16)) == ("No Answer", 0)               # 16 minutes with nothing else: the cancel event was lost
+    assert classify(ringing, 60) == (None, 0)                              # the write-back never passes `now`: unchanged
+    assert result_of([ringing]) == ce.NOT_ANSWERED                         # judged long after: counts as an unanswered call
+    connected_no_end = CallInfo(cid="c", rpi="07700900123", owner_name="Joe Nicholls", ring_ts=at(0), start_ts=at(0))
+    assert classify(connected_no_end, 60, LATER) == (None, 0)             # no end event: talk time unknown, never guessed
+    assert result_of([connected_no_end]) == ce.NO_CALL
 
 
 # ---------------------------------------------------------------- when an appointment is judged
 
 def test_nothing_is_written_until_the_window_has_closed_and_settled():
-    closes = START + timedelta(minutes=120 + ce.SETTLE_MINUTES)
+    closes = START + timedelta(minutes=180 + ce.SETTLE_MINUTES)
     assert evidence([call("x", talk=900)], now=closes - timedelta(seconds=1)) == []
     assert len(evidence([call("x", talk=900)], now=closes)) == 1
 
@@ -129,15 +137,15 @@ def test_cancelled_deleted_and_timeless_appointments_are_skipped():
 
 def test_a_row_is_frozen_once_the_window_closed_long_ago_but_recomputed_before_that():
     calls = [call("x", talk=900)]
-    just_closed = START + timedelta(minutes=120) + timedelta(hours=ce.FREEZE_HOURS - 1)
+    just_closed = START + timedelta(minutes=180) + timedelta(hours=ce.FREEZE_HOURS - 1)
     assert len(evidence(calls, existing={"a1": {}}, now=just_closed)) == 1
-    assert evidence(calls, existing={"a1": {}}, now=START + timedelta(minutes=120, hours=ce.FREEZE_HOURS + 1)) == []
+    assert evidence(calls, existing={"a1": {}}, now=START + timedelta(minutes=180, hours=ce.FREEZE_HOURS + 1)) == []
     assert len(evidence(calls, existing={}, now=START + timedelta(days=30))) == 1             # never stored: still judged
 
 
 def test_an_appointment_older_than_the_event_history_is_skipped_not_called_no_call():
-    assert evidence([], coverage_start=START - timedelta(minutes=119)) == []
-    assert len(evidence([], coverage_start=START - timedelta(minutes=120))) == 1
+    assert evidence([], coverage_start=START - timedelta(minutes=179)) == []
+    assert len(evidence([], coverage_start=START - timedelta(minutes=180))) == 1
     assert len(evidence([], coverage_start=None)) == 1
 
 
@@ -166,7 +174,7 @@ def test_noshow_with_a_real_conversation_is_flagged():
 def test_a_call_that_happened_but_was_never_marked_is_flagged_after_a_day():
     for status in ("new", "confirmed", ""):
         assert types(flags_for(status, [call("x", talk=900)])) == ["unmarked_with_call"]
-    soon = START + timedelta(hours=3)
+    soon = START + timedelta(minutes=200)                                                    # the window has closed and settled, a day has not passed
     assert flags_for("confirmed", [call("x", talk=900)], now=soon) == []                        # staff still have time
     assert flags_for("confirmed", [call("x", talk=20)]) == [] and flags_for("confirmed", []) == []
     assert flags_for("cancelled", [call("x", talk=900)]) == []
@@ -304,7 +312,8 @@ def test_the_runner_writes_evidence_activity_and_flags_without_any_phone_number(
     assert asked == [runner.EVENTS_BACKFILL] and out["call_evidence"]["backfill"] and out["call_evidence"]["evidence"] == 1
     row = stores.evidence.read()[0]
     assert (row["appointment_id"], row["result"], row["best_talk_seconds"]) == ("e1", "long_call", "1500")
-    assert [r["caller"] for r in stores.activity.read()] == ["Joe Nicholls"]
+    assert {r["caller"] for r in stores.activity.read()} == {"Joe Nicholls"}
+    assert sorted(r["day"] for r in stores.activity.read()) == ["2026-10-18", "2026-10-21"]       # the whole history is counted, including its first day
     assert "showed_without_call" not in [f["type"] for f in stores.flags.read()]
     dump = str(stores.sheet.tabs["Call_Evidence"].values) + str(stores.sheet.tabs["Call_Activity"].values) + str(stores.sheet.tabs["Flags"].values)
     assert "7700" not in dump
@@ -358,3 +367,107 @@ def test_appointments_from_before_the_evonex_history_began_are_not_judged():
     assert out["call_evidence"]["evidence"] == 0 and stores.flags.read() == []
     out, _ = run_with_evidence(ghl, AuditStores(sheet=FakeSheet()), [])                          # no history at all: nothing can be judged
     assert out["call_evidence"]["evidence"] == 0
+
+
+# ---------------------------------------------------------------- 23 Oct fixes
+
+def test_the_first_day_of_history_is_counted_unless_the_read_was_cut_short():
+    first_day = {c.cid: c for c in [call("a", ring=-60 * 6, talk=900), call("b", ring=-60 * 5, talk=30)]}       # 09:00 and 10:00 on the 21st
+    cover = at(-60 * 6)                                                  # the first event we hold is 09:00 that day
+    assert ce.build_call_activity(first_day, None)[0]["calls"] == 2       # the read reached the start of the history: the day is complete
+    assert ce.build_call_activity(first_day, cover) == []                 # the read hit its limit: that day may be partial
+
+
+def test_a_connected_call_that_never_ended_is_counted_as_connected_with_no_talk_time_once_it_is_clearly_lost():
+    lost = CallInfo(cid="l", rpi="07700900123", owner_name="Joe Nicholls", ring_ts=at(0), start_ts=at(0))
+    assert ce.build_call_activity({"l": lost}, None, at(60)) == []                        # an hour: it may still be running
+    row = ce.build_call_activity({"l": lost}, None, at(60 * 5))[0]
+    assert (row["calls"], row["connected"], row["conversations"], row["talk_seconds"], row["no_answer"]) == (1, 1, 0, 0, 0)
+    rang = CallInfo(cid="r", rpi="07700900123", owner_name="Joe Nicholls", ring_ts=at(0))
+    assert ce.build_call_activity({"r": rang}, None, at(10)) == []
+    assert ce.build_call_activity({"r": rang}, None, at(20))[0]["no_answer"] == 1
+
+
+def test_the_flag_says_to_review_and_mentions_the_advisors_calls_to_other_numbers():
+    other = call("o", ring=30, talk=700, phone="07700900999")              # the advisor had a real call to a DIFFERENT number
+    short = call("s", ring=1, talk=20)
+    rows = evidence([short, other], all_calls=[short, other])
+    r = rows[0]
+    assert r["result"] == ce.SHORT_CALL and r["advisor_other_number_calls"] == 1 and r["advisor_other_number_best_talk"] == 700
+    flag = ce.evidence_flags(rows, [appt(status="showed")], LATER)[0]
+    assert flag["detail"].startswith("To review") and "1 other connected call" in flag["detail"] and "11 min" in flag["detail"]
+    quiet = ce.evidence_flags(evidence([short], all_calls=[short]), [appt(status="showed")], LATER)[0]
+    assert "other connected" not in quiet["detail"] and quiet["detail"].startswith("To review")
+
+
+def test_calls_to_other_numbers_do_not_count_when_short_late_or_by_someone_else():
+    calls = [call("a", ring=5, talk=30, phone="07700900999"),                       # under a minute
+             call("b", ring=200, talk=900, phone="07700900999"),                    # outside the window
+             call("c", caller="Hugo Sharpe", ring=5, talk=900, phone="07700900999"),  # not the advisor
+             call("d", ring=5, talk=900, phone="07700900123")]                      # the client's own number: not "other"
+    assert evidence(calls, all_calls=calls)[0]["advisor_other_number_calls"] == 0
+
+
+def test_the_client_number_is_the_one_that_parses_whatever_order_the_events_arrive_in():
+    from app.writeback_rules import collapse_events, pick_number
+    def row(sub, rpi, n):
+        return {"event": "OUTBOUNDCALL", "cid": "k", "subevent": sub, "ts": f"2026-10-21T15:0{n}:00Z", "dedup_key": f"k{n}", "rpi": rpi, "on": "Joe Nicholls"}
+    rows = [row("RINGCALL", "07700900123", 0), row("CANCELCALL", "9110000000000000", 1), row("STARTCALL", "07700900123", 2), row("ENDCALL", "07700900123", 3)]
+    assert collapse_events(rows)["k"].rpi == "07700900123" == collapse_events(list(reversed(rows)))["k"].rpi
+    assert collapse_events([row("CANCELCALL", "9110000000000000", 1)])["k"].rpi == "9110000000000000"       # only junk: kept so the call is still visible
+    assert pick_number({}) == "" and pick_number({"07700900123": 1, "07700900124": 1}) == "07700900123"      # ties: smallest, never arrival order
+    assert pick_number({"9110000000000000": 3, "07700900123": 1}) == "07700900123"                           # a number that parses beats a more frequent junk one
+    assert pick_number({"07700900124": 1, "07700900123": 3}) == "07700900123"                                # then the most frequent
+
+
+def test_the_runner_stores_client_names_and_keeps_them_between_cycles():
+    ghl = FakeGHL([finished_appointment()], {"c1": {**contact_with_phone("c1"), "contactName": "Pat Example"}})
+    stores = AuditStores(sheet=FakeSheet())
+    run_with_evidence(ghl, stores, EARLIER)
+    assert stores.appointments.read()[0]["contact_name"] == "Pat Example"
+    ghl.contacts["c1"]["contactName"] = "Renamed Later"                                       # an already stored name is never re-fetched or changed
+    run_with_evidence(ghl, stores, EARLIER, now=LATER + timedelta(minutes=15))
+    assert stores.appointments.read()[0]["contact_name"] == "Pat Example"
+
+
+def test_names_come_from_first_and_last_name_when_there_is_no_display_name_and_stay_blank_when_unknown():
+    from app.appointments import contact_display_name
+    assert contact_display_name({"firstName": "Pat", "lastName": "Example"}) == "Pat Example"
+    assert contact_display_name({"firstName": " Pat "}) == "Pat" and contact_display_name({"contactName": "A B", "firstName": "x"}) == "A B"
+    assert contact_display_name({}) == ""
+
+
+def test_an_existing_shorter_header_row_is_extended_when_columns_were_appended():
+    sheet = FakeSheet()
+    from app.audit_store import TabStore
+    store = TabStore(sheet, "T", ["a", "b", "c"], ["a"])
+    ws = sheet.add_worksheet("T", 10, 3)
+    ws.update(values=[["a", "b"]], range_name="A1")
+    store._ws()
+    assert sheet.tabs["T"].values[0] == ["a", "b", "c"]
+    other = TabStore(sheet, "T2", ["x", "y", "w"], ["x"])
+    ws2 = sheet.add_worksheet("T2", 10, 3)
+    ws2.update(values=[["z", "y"]], range_name="A1")                                          # not a prefix: left strictly alone
+    other._ws()
+    assert sheet.tabs["T2"].values[0] == ["z", "y"]
+
+
+def test_client_name_lookups_are_bounded_per_cycle_and_finish_on_the_next(monkeypatch):
+    monkeypatch.setattr(runner, "NAME_FETCH_PER_CYCLE", 1)
+    events = [finished_appointment(), event(eid="e2", contact="c2", added="2026-10-20T09:00:00Z", start="2026-10-21T16:00:00Z", status="showed")]
+    ghl = FakeGHL(events, {"c1": {**contact("c1"), "contactName": "Pat One"}, "c2": {**contact("c2"), "contactName": "Sam Two"}})
+    stores = AuditStores(sheet=FakeSheet())
+    names = lambda: sorted((r["appointment_id"], r["contact_name"]) for r in stores.appointments.read())
+    asyncio.run(runner._fill_contact_names(ghl, stores, ap_rows(events), {}))
+    rows = ap_rows(events)
+    asyncio.run(runner._fill_contact_names(ghl, stores, rows, {}))
+    assert sorted(r["contact_name"] for r in rows).count("") == 1                              # one looked up, one still to do
+    stores.appointments.upsert(rows)
+    rows2 = ap_rows(events)
+    asyncio.run(runner._fill_contact_names(ghl, stores, rows2, {}))
+    assert sorted(r["contact_name"] for r in rows2) == ["Pat One", "Sam Two"]
+    assert names() == [("e1", "Pat One"), ("e2", "")]
+
+
+def ap_rows(events):
+    return events_to_rows(events, USERS)

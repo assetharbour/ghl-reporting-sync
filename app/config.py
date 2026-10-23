@@ -140,8 +140,9 @@ TRUSTED_BOOKING_SOURCES = [
 # Reads the private Evonex sheet and GHL, writes only the reporting sheet.
 _ce = os.environ.get("CALL_EVIDENCE", "off").strip().lower()
 CALL_EVIDENCE = "on" if _ce == "on" else "off"
-# A call counts as "around the appointment" when it started within this many minutes either side of the start time.
-CALL_MATCH_WINDOW_MINUTES = _env_number("CALL_MATCH_WINDOW_MINUTES", 120, int)
+# A call counts as "around the appointment" when it started within this many minutes either side of the start time
+# (widened from 120 to 180 on 23 Oct: an advisor sometimes starts the call well after the booked time).
+CALL_MATCH_WINDOW_MINUTES = _env_number("CALL_MATCH_WINDOW_MINUTES", 180, int)
 # Talk time that makes a connected call a real conversation (same as the write-back's Answered threshold) and a "long call"
 # (a real fact find). Chosen from the first week of real calls (22 Oct 2026): advisors' matched calls were either under a
 # minute or 9 to 55 minutes. Revisit once Asset Harbour confirms how long a fact find normally runs.

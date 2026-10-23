@@ -106,6 +106,7 @@ class CallInfo:
     cancel_ts: Optional[datetime] = None
     last_received: Optional[datetime] = None
     event_count: int = 0
+    rpi_votes: dict = field(default_factory=dict)      # every number seen on this call's events -> how often
 
     @property
     def finish_ts(self) -> Optional[datetime]:
@@ -136,8 +137,8 @@ def collapse_events(rows) -> dict:
         received = parse_ts(r.get("received_at_utc"))
         if received and (info.last_received is None or received > info.last_received):
             info.last_received = received
-        if r.get("rpi") and not info.rpi:
-            info.rpi = r["rpi"]
+        if r.get("rpi"):
+            info.rpi_votes[r["rpi"]] = info.rpi_votes.get(r["rpi"], 0) + 1
         if r.get("on") and not info.owner_name:
             info.owner_name = r["on"]
         if r.get("oe") and not info.owner_email:
@@ -153,7 +154,20 @@ def collapse_events(rows) -> dict:
             info.cancel_ts = ts
         elif sub == "ENDCALL" and (info.end_ts is None or ts > info.end_ts):
             info.end_ts = ts
+    for info in calls.values():
+        info.rpi = pick_number(info.rpi_votes)
     return calls
+
+
+def pick_number(votes: dict) -> str:
+    """The client's number for a call. Evonex sometimes puts a junk value ("911...") on CANCELCALL events, so a number that
+    parses wins over one that does not; then the most frequent; then the smallest, so the result never depends on the order
+    in which the events arrived."""
+    if not votes:
+        return ""
+    valid = {v: n for v, n in votes.items() if to_e164(v)}
+    pool = valid or votes
+    return sorted(pool, key=lambda v: (-pool[v], v))[0]
 
 
 def is_terminal(info: CallInfo, now: datetime, settle_seconds: float) -> bool:
@@ -168,16 +182,24 @@ def is_terminal(info: CallInfo, now: datetime, settle_seconds: float) -> bool:
     return (now - info.last_received).total_seconds() >= settle_seconds
 
 
-def classify(info: CallInfo, talk_threshold_seconds: int):
+STALE_RING_SECONDS = 15 * 60       # a call that only ever rang and has had no other event for this long never connected
+
+
+def classify(info: CallInfo, talk_threshold_seconds: int, now: Optional[datetime] = None):
     """Outcome per spec 5.3. Returns (outcome, talk_seconds); outcome is None
     while the call is not finished.
 
     No STARTCALL                        -> No Answer
     STARTCALL, talk < threshold          -> Voicemail
     STARTCALL, talk >= threshold         -> Answered
+
+    Reports (not the write-back) pass `now`: a call that only rang and had no other event for 15 minutes is a No Answer whose
+    cancel event was lost, instead of being "in progress" forever.
     """
     if info.start_ts is None:
         finished = info.end_ts is not None or info.cancel_ts is not None
+        if not finished and now is not None and info.ring_ts is not None and (now - info.ring_ts).total_seconds() > STALE_RING_SECONDS:
+            finished = True
         return ("No Answer", 0) if finished else (None, 0)
     if info.end_ts is None:
         return None, 0

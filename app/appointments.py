@@ -17,6 +17,9 @@ APPT_COLUMNS = [
     "status", "status_updated_at", "deleted",
     # Appended: the OFFICIAL booker and where it came from ("calendar" or "field"), filled by the audit.
     "booked_by_official", "booked_by_basis",
+    # Appended 23 Oct: the client's name, so appointments of contacts with no row in Leads are still readable. Names are
+    # already in the Leads tab; the dashboard is behind the same login.
+    "contact_name",
 ]
 
 
@@ -67,6 +70,7 @@ def event_to_row(event: dict, users: dict) -> Optional[dict]:
         "deleted": "TRUE" if event.get("deleted") else "",
         "booked_by_official": "",
         "booked_by_basis": "",
+        "contact_name": "",
     }
 
 
@@ -83,3 +87,11 @@ def events_to_rows(events: list, users: dict) -> list:
 def is_live(row: dict) -> bool:
     """An appointment that still counts: not deleted, not cancelled or invalid."""
     return not row.get("deleted") and row.get("status") not in ("cancelled", "invalid")
+
+
+def contact_display_name(contact: dict) -> str:
+    """The name GHL shows for a contact: contactName, else first + last name."""
+    name = str(contact.get("contactName") or contact.get("name") or "").strip()
+    if name:
+        return name
+    return " ".join(p for p in (str(contact.get("firstName") or "").strip(), str(contact.get("lastName") or "").strip()) if p)

@@ -49,7 +49,11 @@ class TabStore:
                 ws = self.sheet.worksheet(self.title)
             except gspread.WorksheetNotFound:
                 ws = self.sheet.add_worksheet(title=self.title, rows=1000, cols=len(self.headers))
-            if not any(_with_retry(lambda: ws.row_values(1))):
+            header = _with_retry(lambda: ws.row_values(1))
+            if not any(header):
+                _with_retry(lambda: ws.update(values=[self.headers], range_name="A1"))
+            elif len(header) < len(self.headers) and list(header) == list(self.headers[: len(header)]):
+                # Columns were appended in a newer version: extend the header row so the dashboard sees them.
                 _with_retry(lambda: ws.update(values=[self.headers], range_name="A1"))
             self._ws_cache = ws
         return self._ws_cache

@@ -15,7 +15,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from app import config
-from app.appointments import events_to_rows, parse_dt
+from app.appointments import contact_display_name, events_to_rows, parse_dt
 from app.audit_store import AuditStores
 from app.call_evidence import build_call_activity, build_evidence, calls_by_phone, evidence_flags, is_ready
 from app.field_audit import (
@@ -33,10 +33,42 @@ EVENTS_NORMAL, EVENTS_BACKFILL = 1500, 12000          # Evonex event rows read p
 EVIDENCE_LOOKBACK_DAYS, EVIDENCE_BACKFILL_DAYS = 4, 30
 
 
+NAME_FETCH_PER_CYCLE = 100         # contacts looked up per cycle to fill missing client names (the rest follow next cycle)
+
+
+async def _fill_contact_names(ghl, stores, appointments, contacts) -> None:
+    """Carry the client's name onto each appointment row. Names already stored are kept; missing ones come from the contacts
+    this cycle already read, then from GHL (bounded per cycle). A failed lookup just leaves the name blank for next time."""
+    stored = {r["appointment_id"]: r.get("contact_name", "") for r in stores.appointments.read()}
+    known = {}
+    for a in appointments:
+        cid = a["contact_id"]
+        name = stored.get(a["appointment_id"], "")
+        if not name and cid in contacts:
+            name = contact_display_name(contacts[cid])
+        a["contact_name"] = name
+        if name and cid:
+            known[cid] = name
+    for a in appointments:                                  # the same client's other appointments
+        if not a["contact_name"] and a["contact_id"] in known:
+            a["contact_name"] = known[a["contact_id"]]
+    missing = sorted({a["contact_id"] for a in appointments if not a["contact_name"] and a["contact_id"]})[:NAME_FETCH_PER_CYCLE]
+    if not missing:
+        return
+    try:
+        fetched = await ghl.get_all_contacts(missing)
+    except Exception as exc:
+        logger.warning("client name lookup failed: %s", type(exc).__name__)
+        return
+    for a in appointments:
+        if not a["contact_name"] and a["contact_id"] in fetched:
+            a["contact_name"] = contact_display_name(fetched[a["contact_id"]])
+
+
 async def call_evidence_step(ghl, stores, appointments, now, cfg, events_reader) -> tuple:
     """Match finished appointments to the advisor's Evonex call. Returns (flags, summary). Reads GHL contacts (phone
     numbers, in memory only) and the Evonex events; writes Call_Evidence and Call_Activity (no phone numbers)."""
-    window = int(getattr(cfg, "CALL_MATCH_WINDOW_MINUTES", 120))
+    window = int(getattr(cfg, "CALL_MATCH_WINDOW_MINUTES", 180))
     conversation = int(getattr(cfg, "CALL_CONVERSATION_SECONDS", 60))
     long_seconds = int(getattr(cfg, "CALL_LONG_SECONDS", 600))
     existing = {r["appointment_id"]: r for r in stores.evidence.read()}
@@ -60,9 +92,13 @@ async def call_evidence_step(ghl, stores, appointments, now, cfg, events_reader)
             if phone:
                 phones[cid] = phone
     evidence = build_evidence(ready, phones, calls_by_phone(calls), existing, now, window_minutes=window,
-                              conversation_seconds=conversation, long_seconds=long_seconds, coverage_start=coverage)
+                              conversation_seconds=conversation, long_seconds=long_seconds, coverage_start=coverage,
+                              all_calls=list(calls.values()))
     result = stores.evidence.upsert(evidence) if evidence else {"inserted": 0, "updated": 0}
-    activity = build_call_activity(calls, coverage)
+    # A read that reached the start of the history holds every day completely; only a read that hit its row limit can
+    # have cut the oldest day short.
+    truncated = len(rows) >= asked
+    activity = build_call_activity(calls, coverage if truncated else None, now)
     if activity:
         stores.activity.upsert(activity)
     flags = evidence_flags(evidence, appointments, now)
@@ -148,6 +184,7 @@ async def run_cycle(ghl, stores, cfg=config, now=None, users=None, events_reader
     # (everything else), so it never depends on which contacts this cycle happened to read.
     for row in appointments:
         row["booked_by_official"], row["booked_by_basis"] = official.get(row["appointment_id"], ("", ""))
+    await _fill_contact_names(ghl, stores, appointments, contacts)
     appt_result = stores.appointments.upsert(appointments)
 
     # 3b. Call evidence (optional; a failure here never stops the rest of the audit).
