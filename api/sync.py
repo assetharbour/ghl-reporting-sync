@@ -6,6 +6,7 @@ from dateutil.parser import parse as parse_date
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 
 from app import audit_runner, config, ghl_client, incremental, join, sheets_client, writeback
+from app.users import current_users
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,8 @@ async def _full_cycle(ghl, sheets, opportunities=None):
     contact_ids = list({o["contactId"] for o in opportunities if o.get("contactId")})
     contact_map = await ghl.get_all_contacts(contact_ids)
 
-    rows = join.build_all_rows(opportunities, contact_map)
+    users = await current_users(ghl)           # live GHL users, so new staff (Ava, Hugo ...) are named as case admins
+    rows = join.build_all_rows(opportunities, contact_map, users)
 
     # Shadow mode: log what an incremental run would have missed. Never raises.
     snapshot = None

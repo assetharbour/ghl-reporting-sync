@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 from app import config, join
 from app.field_mapping import PIPELINE, USERS
+from app.users import current_users
 from app.join import COLUMNS
 
 logger = logging.getLogger("incremental")
@@ -133,19 +134,20 @@ def index_existing(values: list) -> dict:
 
 # --------------------------------------------------------------------- planning
 
-def opportunity_changed(opp: dict, existing: dict, since: datetime) -> bool:
+def opportunity_changed(opp: dict, existing: dict, since: datetime, users: dict = None) -> bool:
+    users = USERS if users is None else users
     updated = parse_ts(opp.get("updatedAt"))
     if updated is not None and updated >= since:
         return True
     return (
         PIPELINE["stages"].get(opp.get("pipelineStageId"), "") != existing.get("pipeline_stage", "")
         or (opp.get("status") or "") != existing.get("case_status", "")
-        or USERS.get(opp.get("assignedTo"), "") != existing.get("opportunity_owner", "")
+        or users.get(opp.get("assignedTo"), "") != existing.get("opportunity_owner", "")
         or join._to_date_str(opp.get("createdAt")) != existing.get("created_date", "")
     )
 
 
-def plan_changes(opportunities: list, existing_by_opp: dict, changed_contact_ids: set, since: datetime):
+def plan_changes(opportunities: list, existing_by_opp: dict, changed_contact_ids: set, since: datetime, users: dict = None):
     """Opportunities whose row must be rebuilt, plus a Counter of why."""
     plan, reasons = [], Counter()
     for opp in opportunities:
@@ -154,7 +156,7 @@ def plan_changes(opportunities: list, existing_by_opp: dict, changed_contact_ids
             reasons["new"] += 1
         elif opp.get("contactId") in changed_contact_ids:
             reasons["contact_changed"] += 1
-        elif opportunity_changed(opp, current, since):
+        elif opportunity_changed(opp, current, since, users):
             reasons["opportunity_changed"] += 1
         else:
             continue
@@ -188,7 +190,8 @@ async def run(ghl, sheets, now=None):
     except ValueError as exc:
         raise FallbackToFull(str(exc), opportunities)
 
-    plan, reasons = plan_changes(opportunities, existing, set(changed_by_id), since)
+    users = await current_users(ghl)
+    plan, reasons = plan_changes(opportunities, existing, set(changed_by_id), since, users)
 
     # Opportunity-only changes still need their contact; search results already
     # carry the contact (custom fields included) for everything else.
@@ -196,7 +199,7 @@ async def run(ghl, sheets, now=None):
     fetched = await ghl.get_all_contacts(sorted(missing)) if missing else {}
     contact_map = {**fetched, **changed_by_id}
 
-    rebuilt = join.build_all_rows(plan, contact_map)
+    rebuilt = join.build_all_rows(plan, contact_map, users)
     to_write = [
         row for row in rebuilt
         if row["opportunity_id"] not in existing or row_differs(row, existing[row["opportunity_id"]])
@@ -262,7 +265,7 @@ async def shadow_check(ghl, sheets, opportunities: list, rows: list):
             logger.warning("shadow: changed-contact lookup incomplete this run")
             _record_shadow(sheets, {"since_utc": since.isoformat(), "missed_detail": "changed-contact lookup incomplete"})
             return values
-        plan, reasons = plan_changes(opportunities, existing, {c["id"] for c in changed}, since)
+        plan, reasons = plan_changes(opportunities, existing, {c["id"] for c in changed}, since, await current_users(ghl))
         planned = {o["id"] for o in plan}
 
         true_changes = {}

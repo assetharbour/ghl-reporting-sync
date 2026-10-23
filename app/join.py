@@ -113,8 +113,10 @@ def parse_number(value):
         return None
 
 
-def build_row(opp: dict, contact: dict) -> dict:
-    """Join one opportunity with its contact into one flat Leads row."""
+def build_row(opp: dict, contact: dict, users: dict = None) -> dict:
+    """Join one opportunity with its contact into one flat Leads row. `users` maps GHL user ids to names (the live list, see app/users.py);
+    without it the static USERS map is used."""
+    users = USERS if users is None else users
     cfs = _collect_custom_fields(opp, contact)
 
     client_name = " ".join(
@@ -141,11 +143,11 @@ def build_row(opp: dict, contact: dict) -> dict:
         "case_status": opp.get("status") or "",
         # Deprecated: opportunity-level assignedTo. Kept only for audit —
         # this is NOT the case admin. Use "admin" below instead.
-        "opportunity_owner": USERS.get(opp.get("assignedTo"), ""),
+        "opportunity_owner": users.get(opp.get("assignedTo"), ""),
         # The actual current case admin: Anita Andrews pre-handover, or
         # whichever of the 3 handover admins the automation reassigned to.
         # Sourced from the CONTACT record, not the opportunity.
-        "admin": USERS.get(contact.get("assignedTo"), ""),
+        "admin": users.get(contact.get("assignedTo"), ""),
     }
 
     for col in COLUMNS:
@@ -188,7 +190,7 @@ def build_row(opp: dict, contact: dict) -> dict:
     return row
 
 
-def build_all_rows(opportunities: list, contact_map: dict) -> list:
+def build_all_rows(opportunities: list, contact_map: dict, users: dict = None) -> list:
     """Build a row per opportunity, skipping any whose contact is missing."""
     rows = []
     for opp in opportunities:
@@ -199,5 +201,5 @@ def build_all_rows(opportunities: list, contact_map: dict) -> list:
                 opp.get("id"), opp.get("contactId"),
             )
             continue
-        rows.append(build_row(opp, contact))
+        rows.append(build_row(opp, contact, users))
     return rows
