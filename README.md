@@ -95,6 +95,10 @@ admin or advisor pair from `call_phase`, writes status + counter + `last_call_at
 `written_unverified`. `POST /api/evonex/writeback/sweep` (header `x-cron-secret`, also run by every
 `/api/sync` call) retries calls whose inline attempt did not finish.
 
+Sheet reads are rationed: Google allows about 60 read requests a minute per user and the sync, audit, Evonex receiver and write-back share that. The write-back opens the spreadsheet once per warm
+instance, reads the tail of Evonex_Events and Writeback_Log in a single request once the last row is known, reads only after the quiet period, and answers a call it has already closed from memory.
+A finished call costs about 3 reads when warm (see `tests/test_writeback_reads.py`).
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `WRITEBACK_MODE` | `off` | `off` nothing runs; `dry_run` does everything except the PUT and logs what it would write; `on` writes. Any other value = off |

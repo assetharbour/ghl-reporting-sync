@@ -25,7 +25,7 @@ from app.writeback_ghl import GHLError, GHLWriteback, pick_contact
 from app.writeback_rules import (
     classify, collapse_events, decide, field_value_matches, is_terminal, parse_ts, to_e164,
 )
-from app.writeback_store import CLAIMED, FAILED, FINAL, WritebackStore
+from app.writeback_store import CLAIMED, FAILED, FINAL, shared_store
 
 logger = logging.getLogger("writeback")
 
@@ -103,6 +103,8 @@ class Writeback:
 
     def _close(self, cid, status, **fields):
         self.store.append_log(cid=cid, status=status, mode=self.cfg.WRITEBACK_MODE, **fields)
+        if status in FINAL and hasattr(self.store, "remember_done"):
+            self.store.remember_done(cid)
 
     # ---- one call -----------------------------------------------------------
 
@@ -111,11 +113,19 @@ class Writeback:
         string (also useful in tests); never raises for expected conditions."""
         if self.cfg.WRITEBACK_MODE == "off":
             return "off"
+        done = getattr(self.store, "done", None)
+        if done is not None and cid in done:
+            return "done"                              # this instance already closed it: no sheet reads at all
+        # Wait out the quiet period BEFORE reading: the first read used to land inside it, find the call not yet settled and need a
+        # second read after sleeping. Waiting first is the same delay for one read less (the sheet read quota is shared and small).
+        self._sleep(self.cfg.WRITEBACK_SETTLE_SECONDS)
         info = collapse_events(self.store.recent_events(400)).get(cid)
         if info is None:
             return "no_events"
         state = self._cid_state(cid, self.store.recent_log())
         if state != "open":
+            if state == "done" and done is not None:
+                self.store.remember_done(cid)
             return state
         info = self._settle(cid, info)
         if info is None:
@@ -273,7 +283,7 @@ class Writeback:
 # --------------------------------------------------------------------------
 
 def _build() -> Writeback:
-    return Writeback(WritebackStore(), GHLWriteback())
+    return Writeback(shared_store(), GHLWriteback())
 
 
 def process_cid_safely(cid: str) -> None:
