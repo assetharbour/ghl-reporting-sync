@@ -320,8 +320,7 @@ def generate_introducer_report_pdf(data: dict, report_type: str, period_label: s
 
 
 def build_individual_highlights(stat: dict) -> list:
-    """Same number-backed-only rule as build_highlights, scoped to one
-    introducer's own leads -- no comparison against other introducers."""
+    """Number-backed highlights for one introducer, excluding revenue."""
     lines = []
     count = stat["count"]
     completions = stat["completions"]
@@ -337,21 +336,13 @@ def build_individual_highlights(stat: dict) -> list:
     if stat["open"]:
         lines.append(f"{stat['open']} of these leads are still open.")
 
-    if stat["revenue_sum"] is not None:
-        lines.append(
-            f"Recorded revenue from these referrals: {_fmt_currency(stat['revenue_sum'])} "
-            f"across {stat['revenue_recorded']} of {count} cases."
-        )
-
     return lines
 
 
 def generate_individual_introducer_report_pdf(
     stat: dict, leads: list, introducer_name: str, period_label: str
 ) -> bytes:
-    """Same branding and layout system as generate_introducer_report_pdf,
-    scoped to a single introducer's own leads -- no ranking table against
-    other introducers, since this PDF is meant for that introducer only."""
+    """Builds an individual introducer PDF without revenue information."""
     buf = io.BytesIO()
 
     content_w = PAGE_W - 2 * MARGIN
@@ -379,16 +370,13 @@ def generate_individual_introducer_report_pdf(
 
     story = []
 
+    # Three summary cards, with no revenue card.
     stat_cells = [
         _stat_block("Leads Sent", str(stat["count"])),
         _stat_block("Reached Completion", str(stat["completions"])),
         _stat_block("Conversion", _fmt_pct(stat["completions"], stat["count"])),
-        _stat_block(
-            "Revenue",
-            _fmt_currency(stat["revenue_sum"]) if stat["revenue_sum"] is not None else "—",
-        ),
     ]
-    stats_table = Table([stat_cells], colWidths=[content_w * 0.25] * 4)
+    stats_table = Table([stat_cells], colWidths=[content_w / 3] * 3)
     stats_table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     story.append(stats_table)
     story.append(Spacer(1, 8 * mm))
@@ -402,22 +390,25 @@ def generate_individual_introducer_report_pdf(
     story.append(Paragraph("Your leads this period", STYLES["section"]))
     header_row = [
         Paragraph(h, STYLES["table_header"])
-        for h in ["Client", "Created", "Stage", "Status", "Revenue"]
+        for h in ["Client", "Created", "Stage", "Status"]
     ]
     table_rows = [header_row]
     for r in sorted(leads, key=lambda r: r.get("created_date") or ""):
-        revenue = parse_number(r.get("total_revenue"))
         table_rows.append(
             [
                 Paragraph(str(r.get("client_name") or "—"), STYLES["table_cell_bold"]),
                 Paragraph(str(r.get("created_date") or "—"), STYLES["table_cell"]),
                 Paragraph(str(r.get("pipeline_stage") or "—"), STYLES["table_cell"]),
                 Paragraph(str(r.get("case_status") or "—"), STYLES["table_cell"]),
-                Paragraph(_fmt_currency(revenue) if revenue is not None else "—", STYLES["table_cell"]),
             ]
         )
 
-    col_widths = [content_w * 0.30, content_w * 0.16, content_w * 0.24, content_w * 0.14, content_w * 0.16]
+    col_widths = [
+        content_w * 0.36,
+        content_w * 0.18,
+        content_w * 0.30,
+        content_w * 0.16,
+    ]
     leads_table = Table(table_rows, colWidths=col_widths, repeatRows=1)
     style_cmds = [
         ("BACKGROUND", (0, 0), (-1, 0), BRAND_NAVY),
