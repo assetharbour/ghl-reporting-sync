@@ -1,7 +1,12 @@
 """Computes introducer performance stats for a given period, read from the
 same Leads tab the dashboard reads. Mirrors ghl-dashboard's Introducers.jsx
-logic exactly (conversion = reached the Completion pipeline stage, not
-case_status == 'won', same rule the dashboard was corrected to use)."""
+logic exactly (conversion = reached the Completion or Post Completion
+pipeline stage, not case_status == 'won', same rule the dashboard uses)."""
+
+# A case has completed once it reaches Completion and stays completed when the
+# team moves it on to Post Completion after aftercare (18 Nov 2026 review:
+# October showed no completions while completed cases sat at Post Completion).
+COMPLETED_STAGES = ("Completion", "Post Completion")
 
 import re
 from datetime import date, datetime, timedelta
@@ -78,10 +83,10 @@ def introducer_report_data(rows: list, start: date, end: date) -> dict:
         won = sum(1 for r in leads if r.get("case_status") == "won")
         lost = sum(1 for r in leads if r.get("case_status") == "lost")
         open_count = sum(1 for r in leads if r.get("case_status") == "open")
-        # Conversion = reached the Completion pipeline stage, same
+        # Conversion = reached Completion or Post Completion, same
         # definition as the dashboard (Overview/Introducers/Advisor
         # Performance all use this, not case_status == 'won').
-        completions = sum(1 for r in leads if r.get("pipeline_stage") == "Completion")
+        completions = sum(1 for r in leads if r.get("pipeline_stage") in COMPLETED_STAGES)
         revenue_vals = [
             v for r in leads if (v := parse_number(r.get("total_revenue"))) is not None
         ]

@@ -18,8 +18,9 @@ Definitions (agreed wording for the client):
   show rate  showed / due.   FF per show: full FF / showed.
   rebooked   a cancelled or no-show appointment whose contact has another (not
              deleted) appointment booked LATER, i.e. the client was given a new slot.
-  completed  the contact's mortgage has completed (completion date set, or the case
-             is at Completion / Post Completion). Credited once to the contact's
+  completed  the contact's mortgage has completed (the case is at Completion or
+             Post Completion; a completion date alone does not count, because on a
+             case still at Offer Issued or Exchange it is only the expected date). Credited once to the contact's
              latest due appointment, and only if the completion is on or after
              the day that appointment was booked (so older business never counts).
   conversion to completion = completed / due. Completion takes months, so a recent
