@@ -46,6 +46,9 @@ COLUMNS = [
     # Appended 22 Oct 2026 for sales reporting: the full fact find outcome (one of Full Fact Find Took
     # Place / Advice Given / Review / Annual Review / Amendment - YES), its date, and Docs Requested.
     "fact_find_outcome", "fact_find_date", "docs_requested",
+    # Appended 23 Nov 2026 for Days in State on the dashboard (Andrew, 20 Nov): when the opportunity last moved stage,
+    # straight from GHL's own lastStageChangeAt, as a UTC ISO timestamp ("" when GHL has none).
+    "last_stage_change_at",
 ]
 
 DATE_FIELDS = {
@@ -93,6 +96,14 @@ def _to_date_str(value) -> str:
     if ms is None:
         return ""
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def _to_iso_utc(value) -> str:
+    """Convert a GHL timestamp to a UTC ISO string (seconds), or "" if null/unparseable."""
+    ms = _to_ms(value)
+    if ms is None:
+        return ""
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def parse_number(value):
@@ -185,6 +196,7 @@ def build_row(opp: dict, contact: dict, users: dict = None) -> dict:
     row["total_revenue"] = round(sum(fee_values), 2) if fee_values else ""
 
     row["created_date"] = _to_date_str(opp.get("createdAt"))
+    row["last_stage_change_at"] = _to_iso_utc(opp.get("lastStageChangeAt"))
     row["last_synced"] = datetime.now(timezone.utc).isoformat()
 
     return row
