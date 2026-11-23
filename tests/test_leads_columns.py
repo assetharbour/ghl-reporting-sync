@@ -12,8 +12,16 @@ NEW_COLUMNS = ["fact_find_outcome", "fact_find_date", "docs_requested"]
 def test_new_columns_are_appended_after_the_old_last_column():
     cols = join.COLUMNS
     assert cols.index(OLD_LAST_COLUMN) == 61                       # the 62 original columns did not move
-    assert cols[62:] == NEW_COLUMNS and len(cols) == 65
+    assert cols[62:65] == NEW_COLUMNS                              # and the 22 Oct ones did not move either
+    assert cols[65:] == ["last_stage_change_at"] and len(cols) == 66
     assert len(set(cols)) == len(cols)
+
+
+def test_last_stage_change_is_read_from_the_opportunity():
+    contact = {"id": "c1", "customFields": []}
+    row = join.build_row({"id": "o1", "contactId": "c1", "lastStageChangeAt": "2026-11-18T14:05:33.120Z"}, contact)
+    assert row["last_stage_change_at"] == "2026-11-18T14:05:33Z"
+    assert join.build_row({"id": "o2", "contactId": "c1"}, contact)["last_stage_change_at"] == ""
 
 
 def test_row_reads_the_fact_find_fields_from_the_contact():
@@ -66,7 +74,18 @@ def test_the_header_row_is_extended_when_columns_were_appended():
     client_with(ws).upsert_leads([new_row])
     assert ws.updates == [{"values": [join.COLUMNS], "range_name": "A1"}]              # header extended, nothing moved
     update = ws.batches[0][0]
-    assert update["range"] == "A2:BM2" and update["values"][0][-3] == "Review - YES"
+    assert update["range"] == "A2:BN2" and update["values"][0][join.COLUMNS.index("fact_find_outcome")] == "Review - YES"
+
+
+def test_todays_65_column_sheet_gains_last_stage_change_at_without_moving_data():
+    """The live Leads tab had 65 columns (up to docs_requested) when last_stage_change_at was appended on 23 Nov 2026."""
+    ws = RecordingWorksheet([join.COLUMNS[:65], ["c1", "o1"] + [""] * 63])
+    new_row = {c: "" for c in join.COLUMNS}
+    new_row.update(contact_id="c1", opportunity_id="o1", docs_requested="Yes", last_stage_change_at="2026-11-18T14:05:33Z")
+    client_with(ws).upsert_leads([new_row])
+    assert ws.updates == [{"values": [join.COLUMNS], "range_name": "A1"}]
+    values = ws.batches[0][0]["values"][0]
+    assert values[64] == "Yes" and values[65] == "2026-11-18T14:05:33Z"     # docs_requested stays in column 65
 
 
 def test_a_header_that_is_not_a_prefix_is_left_alone():
